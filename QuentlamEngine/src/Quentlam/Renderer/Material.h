@@ -1,98 +1,73 @@
 #pragma once
-
 #include "Quentlam/Core/Base.h"
 #include "Quentlam/Renderer/Shader.h"
 #include "Quentlam/Renderer/Texture.h"
-
+#include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
-#include <glm/glm.hpp>
 
-namespace Quentlam {
-
-	// Abstract Render Primitive Interface (For decoupled Entity -> Shader binding)
-	class QUENTLAM_API IRenderPrimitive
+namespace Quentlam
+{
+	class QUENTLAM_API Material
 	{
 	public:
-		virtual ~IRenderPrimitive() = default;
-		virtual void Draw() const = 0;
-	};
+		Material() = default;
+		Material(Ref<Shader> shader);
+		~Material() = default;
 
-	// Abstract Shader Interface (Extended from existing Shader)
-	class QUENTLAM_API IShader
-	{
-	public:
-		virtual ~IShader() = default;
-		virtual void Bind() const = 0;
-		virtual void Unbind() const = 0;
-		
-		// Variant Management & Compilation Cache hooks
-		virtual void Recompile(const std::vector<std::string>& macros) = 0;
-		virtual bool IsValid() const = 0;
-	};
+		void Bind() const;
+		void Unbind() const;
 
-	// Base Material Interface
-	class QUENTLAM_API IMaterial
-	{
-	public:
-		virtual ~IMaterial() = default;
-		virtual Ref<Shader> GetShader() const = 0;
-		virtual void Bind() const = 0;
-	};
-
-	// Material Template (Engine Layer)
-	// Holds the base shader and default parameters. Highly data-driven.
-	class QUENTLAM_API Material : public IMaterial
-	{
-	public:
-		Material(const Ref<Shader>& shader, const std::string& name = "Material");
-		virtual ~Material() = default;
-
-		virtual Ref<Shader> GetShader() const override { return m_Shader; }
-		virtual void Bind() const override;
+		Ref<Shader> GetShader() const { return m_Shader; }
+		void SetShader(Ref<Shader> shader) { m_Shader = shader; }
 
 		const std::string& GetName() const { return m_Name; }
+		void SetName(const std::string& name) { m_Name = name; }
 
-		static Ref<Material> Create(const Ref<Shader>& shader, const std::string& name = "Material");
-
-	protected:
-		Ref<Shader> m_Shader;
-		std::string m_Name;
-	};
-
-	// Material Instance (Engine Layer)
-	// Holds overrides for specific parameters. Thread-safe for background loading.
-	class QUENTLAM_API MaterialInstance : public IMaterial
-	{
-	public:
-		MaterialInstance(const Ref<Material>& baseMaterial, const std::string& name = "MaterialInstance");
-		virtual ~MaterialInstance() = default;
-
-		virtual Ref<Shader> GetShader() const override { return m_BaseMaterial->GetShader(); }
-		virtual void Bind() const override;
-
-		const std::string& GetName() const { return m_Name; }
-		Ref<Material> GetBaseMaterial() const { return m_BaseMaterial; }
-
-		// Parameter Setters
 		void SetFloat(const std::string& name, float value);
-		void SetFloat2(const std::string& name, const glm::vec2& value);
-		void SetFloat3(const std::string& name, const glm::vec3& value);
-		void SetFloat4(const std::string& name, const glm::vec4& value);
-		void SetTexture(const std::string& name, const Ref<Texture2D>& texture);
+		void SetInt(const std::string& name, int value);
+		void SetVec2(const std::string& name, const glm::vec2& value);
+		void SetVec3(const std::string& name, const glm::vec3& value);
+		void SetVec4(const std::string& name, const glm::vec4& value);
+		void SetMat4(const std::string& name, const glm::mat4& value);
+		void SetTexture(const std::string& name, Ref<Texture2D> texture);
 
-		static Ref<MaterialInstance> Create(const Ref<Material>& baseMaterial, const std::string& name = "MaterialInstance");
+		template<typename T>
+		T* GetUniform(const std::string& name);
+
+		const std::unordered_map<std::string, float>& GetFloatUniforms() const { return m_FloatUniforms; }
+		const std::unordered_map<std::string, int>& GetIntUniforms() const { return m_IntUniforms; }
+		const std::unordered_map<std::string, glm::vec4>& GetVec4Uniforms() const { return m_Vec4Uniforms; }
+		const std::unordered_map<std::string, glm::vec3>& GetVec3Uniforms() const { return m_Vec3Uniforms; }
+		const std::unordered_map<std::string, glm::vec2>& GetVec2Uniforms() const { return m_Vec2Uniforms; }
+
+		static Ref<Material> Create(Ref<Shader> shader);
 
 	private:
-		Ref<Material> m_BaseMaterial;
+		Ref<Shader> m_Shader;
 		std::string m_Name;
 
-		// Flat parameter tables (No Editor metadata here)
-		std::unordered_map<std::string, float> m_Floats;
-		std::unordered_map<std::string, glm::vec2> m_Float2s;
-		std::unordered_map<std::string, glm::vec3> m_Float3s;
-		std::unordered_map<std::string, glm::vec4> m_Float4s;
-		std::unordered_map<std::string, Ref<Texture2D>> m_Textures;
+		std::unordered_map<std::string, float> m_FloatUniforms;
+		std::unordered_map<std::string, int> m_IntUniforms;
+		std::unordered_map<std::string, glm::vec2> m_Vec2Uniforms;
+		std::unordered_map<std::string, glm::vec3> m_Vec3Uniforms;
+		std::unordered_map<std::string, glm::vec4> m_Vec4Uniforms;
+		std::unordered_map<std::string, glm::mat4> m_Mat4Uniforms;
+		std::unordered_map<std::string, Ref<Texture2D>> m_TextureUniforms;
+		std::unordered_map<std::string, int> m_TextureSlots;
+		int m_TextureSlotCount = 0;
 	};
 
+	class MaterialDefaults
+	{
+	public:
+		static Ref<Material> GetSpriteMaterial();
+		static Ref<Material> GetFlatColorMaterial();
+		static const std::unordered_map<std::string, Ref<Material>>& GetAllDefaults();
+
+	private:
+		static Ref<Material> s_SpriteMaterial;
+		static Ref<Material> s_FlatColorMaterial;
+		static std::unordered_map<std::string, Ref<Material>> s_AllDefaults;
+	};
 }

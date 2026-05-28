@@ -18,8 +18,8 @@ namespace Quentlam
 		void PopOverlay(Layer* overlay);
 
 
-		const uint32_t GetLayerCount() const { return m_Layers.size(); };
-		const std::string& GetLayerName(uint32_t index) const { return m_Layers[index]->GetName(); };
+		uint32_t GetLayerCount() const { return static_cast<uint32_t>(m_Layers.size()); }
+		const std::string& GetLayerName(uint32_t index) const { return m_Layers[index]->GetName(); }
 
 
 		std::vector<Layer*>::iterator begin() { return m_Layers.begin(); }

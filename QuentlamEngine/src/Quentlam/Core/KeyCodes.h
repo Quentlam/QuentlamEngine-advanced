@@ -9,7 +9,7 @@ namespace Quentlam
 	{
 		enum : KeyCode
 		{
-			UNKNOWN  		 =-1,
+			UNKNOWN  		 = 0,
 			SPACE             =32,
 			APOSTROPHE        =39,   /* ' */
 			COMMA             =44,   /* , */

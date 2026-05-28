@@ -11,10 +11,13 @@ namespace Quentlam
 	class Scene
 	{
 	public:
-		Scene();
+		Scene(const std::string& name = std::string());
 		~Scene();
 
 		Entity CreateEntity(const std::string& name = std::string());
+		void DestroyEntity(entt::entity entity);
+
+		Entity GetEntity(entt::entity entity);
 
 		bool OnRuntimeStart();
 		void OnRuntimeStop();

@@ -25,9 +25,12 @@ namespace Quentlam
 
 
 		void BlockEvents(bool block) { m_BlockEvents = block; }
+		void SetGameModeActive(bool active) { m_GameModeActive = active; }
+		bool IsGameModeActive() const { return m_GameModeActive; }
 	private:
 		bool m_BlockEvents = true;
 		float m_Time = 0.0f;
+		bool m_GameModeActive = false;
 
 	};
 

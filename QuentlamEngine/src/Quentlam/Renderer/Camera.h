@@ -12,7 +12,7 @@ namespace Quentlam
 		virtual ~Camera() = default;
 
 		const glm::mat4& GetProjection() const { return m_Projection; }
-		
+		virtual glm::vec3 GetPosition() const { return { 0.0f, 0.0f, 0.0f }; }
 		virtual void SetViewportSize(uint32_t width, uint32_t height) {}
 
 	protected:

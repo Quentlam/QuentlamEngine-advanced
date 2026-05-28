@@ -5,6 +5,12 @@
 #include "Quentlam/Renderer/PerspectiveCamera.h"
 #include "Quentlam/Renderer/PerspectiveCameraController.h"
 #include "Quentlam/Renderer/Model.h"
+#include "Quentlam/Scene/Scene.h"
+#include "Quentlam/Editor/TileMapEditorPanel.h"
+#include "Quentlam/Editor/UIHierarchyPanel.h"
+#include "Quentlam/Editor/UICanvasEditor.h"
+#include "Quentlam/Editor/MaterialEditorPanel.h"
+#include "Quentlam/Editor/EditorCommand.h"
 
 
 namespace Quentlam
@@ -46,10 +52,6 @@ namespace Quentlam
 		//Temp
 		Ref<Texture2D>		m_Texture2D;
 		Ref<Texture2D>		m_CheckerboardTexture;
-		Ref<Texture2D>		m_SpriteSheet;
-		Ref<SubTexture2D>	m_TextureStairs;
-		Ref<SubTexture2D>	m_TextureBarrel;
-		Ref<SubTexture2D>	m_TextureTree;
 
 		Ref<FrameBuffer>	m_Framebuffer;
 		glm::vec2 m_ViewportSize{ 0.0f,0.0f };
@@ -68,7 +70,8 @@ namespace Quentlam
 
 		glm::vec4 m_Square_Color{ 0.3f, 0.3f, 0.8f,1.0f };
 
-		Entity m_SelectedEntity;
+		std::vector<Entity> m_SelectedEntities;
+		Entity m_SelectedEntity; // primary selection (last clicked)
 		Entity m_HoveredEntity;
 		glm::vec2 m_ViewportBounds[2];
 
@@ -112,6 +115,40 @@ namespace Quentlam
 		float m_OutlineIntensity = 1.0f;
 
 		bool m_ShowPhysicsColliders = true;
+
+		// Scene save/load
+		std::string m_ScenePath;
+		bool m_NeedsAutosave = false;
+
+		// TileMap editor
+		bool m_ShowTileMapEditor = false;
+		TileMapEditorPanel m_TileMapEditor;
+		TileMap m_EditorTileMap;
+
+		// UI Hierarchy Panel
+		bool m_ShowUIHierarchy = true;
+		UIHierarchyPanel m_UIHierarchyPanel;
+
+		// UI Canvas Editor
+		bool m_ShowUICanvasEditor = false;
+		UICanvasEditor m_UICanvasEditor;
+
+		// Material Editor
+		bool m_ShowMaterialEditor = false;
+		MaterialEditorPanel m_MaterialEditor;
+
+		// Command Stack (Undo/Redo)
+		EditorCommandStack m_CommandStack;
+		std::shared_ptr<ICommand> m_LastCommand;
+		entt::entity m_CopiedEntity = entt::null;
+
+		// Asset pipeline
+		bool m_ShowAssetBrowser = false;
+		std::string m_RenamingAsset;
+		std::string m_DeletingAsset;
+		bool m_IsRenamePopupOpen = true;
+		bool m_IsDeletePopupOpen = true;
+		char m_RenameBuffer[128] = { 0 };
 	};
 
 }

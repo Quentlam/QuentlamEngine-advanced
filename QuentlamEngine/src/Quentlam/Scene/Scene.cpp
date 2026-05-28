@@ -2,11 +2,16 @@
 
 #include "Scene.h"
 #include "Quentlam/Renderer/Renderer2D.h"
+#include "Quentlam/Renderer/Material.h"
+#include "SpriteRendererComponent.h"
+#include "SpriteAnimationComponent.h"
 #include "Entity.h"
 #include "Components.h"
 #include "Quentlam/Physics/Physics2D.h"
 #include "Quentlam/Physics/Physics3D.h"
 #include "Quentlam/Physics/Physics3DValidation.h"
+#include "Quentlam/Gameplay/NpcModule.h"
+#include "Quentlam/Gameplay/QuestEventModule.h"
 
 #include <glm/glm.hpp>
 #include <sstream>
@@ -84,7 +89,7 @@ namespace Quentlam
 
 
 
-	Scene::Scene()
+	Scene::Scene(const std::string& name)
 	{
 
 
@@ -109,6 +114,16 @@ namespace Quentlam
 		return entity;
 	};
 
+	void Scene::DestroyEntity(entt::entity entity)
+	{
+		m_Registry.destroy(entity);
+	}
+
+	Entity Scene::GetEntity(entt::entity entity)
+	{
+		return Entity{ entity, this };
+	}
+
 	bool Scene::OnRuntimeStart()
 	{
 		if (!Physics2D::OnRuntimeStart(this))
@@ -119,6 +134,9 @@ namespace Quentlam
 			Physics2D::OnRuntimeStop(this);
 			return false;
 		}
+
+		NpcModule::Get().OnDayStart();
+		QuestEventModule::Get().AdvanceDay();
 
 		return true;
 	}
@@ -233,7 +251,19 @@ namespace Quentlam
 			Physics3D::OnUpdate(this, ts);
 		}
 
-		// Render scene
+		NpcModule::Get().Update(ts.GetSeconds());
+		QuestEventModule::Get().Update(ts.GetSeconds());
+
+		{
+			auto animView = m_Registry.view<SpriteAnimationComponent>();
+			for (auto entity : animView)
+			{
+				auto& anim = animView.get<SpriteAnimationComponent>(entity);
+				if (anim.Animator)
+					anim.Animator->Update(ts.GetSeconds());
+			}
+		}
+
 		OnUpdate(ts);
 	}
 
@@ -251,6 +281,32 @@ namespace Quentlam
 			else
 			{
 				Renderer2D::DrawQuad(transform.Transform, sprite.Color, (int)(uint32_t)entity);
+			}
+		}
+
+		auto srView = m_Registry.view<TransformComponent, SpriteRendererComponent>();
+		for (auto entity : srView)
+		{
+			auto [transform, src] = srView.get<TransformComponent, SpriteRendererComponent>(entity);
+
+			Ref<Texture2D> texToDraw = src.SubTexture ? src.SubTexture->GetTexture() : src.Texture;
+
+			auto* animComp = m_Registry.try_get<SpriteAnimationComponent>(entity);
+			if (animComp && animComp->AtlasBinding)
+			{
+				auto subTex = animComp->GetCurrentSubTexture();
+				if (subTex)
+					texToDraw = subTex->GetTexture();
+			}
+
+			if (texToDraw)
+			{
+				Renderer2D::DrawQuad(transform.Transform, texToDraw,
+					src.TilingFactor, src.Color, (int)(uint32_t)entity);
+			}
+			else
+			{
+				Renderer2D::DrawQuad(transform.Transform, src.Color, (int)(uint32_t)entity);
 			}
 		}
 

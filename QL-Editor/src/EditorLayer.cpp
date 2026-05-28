@@ -1,4 +1,7 @@
-#include "qlpch.h"
+#include <windef.h>
+#include <WinBase.h>
+#include <ShellAPI.h>
+#include <ShlObj.h>
 #ifdef _MSC_VER
 #pragma execution_character_set("utf-8")
 #endif
@@ -7,8 +10,13 @@
 #include "EditorToolbarLayout.h"
 #include "Quentlam/Events/ApplicationEvent.h"
 #include "Quentlam/Physics/Physics3D.h"
-#include "ParkourSystem.h"
 #include "Quentlam/Debug/CrashReporter.h"
+#include "Quentlam/Scene/SceneSerializer.h"
+#include "Quentlam/Scene/SceneManager.h"
+#include "Quentlam/Scene/SpriteRendererComponent.h"
+#include "Quentlam/Scene/SpriteAnimationComponent.h"
+#include "Quentlam/Renderer/Material.h"
+#include "Quentlam/Gameplay/AnimationModule.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -210,7 +218,7 @@ namespace Quentlam
 	EditorLayer::EditorLayer()
 		:Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_PerspCameraController(35.0f, 1280.0f / 720.0f)
 	{
-
+		m_UIHierarchyPanel.SetUIGameModule(&UIGameModule::Get());
 	}
 
 	void EditorLayer::OnScenePlay()
@@ -254,10 +262,12 @@ namespace Quentlam
 
 		if (started)
 		{
-			ParkourSystem::OnRuntimeStart(m_ActiveScene.get(), true);
+			m_ActiveScene->OnRuntimeStart();
 			m_SceneState = SceneState::Play;
 			m_bIsPaused = false;
 			m_ToolbarTransitionProgress = 0.0f;
+			Application::Get().GetImGuiLayer()->SetGameModeActive(true);
+			m_CommandStack.Clear();
 		}
 		else
 		{
@@ -287,7 +297,6 @@ namespace Quentlam
 		try
 		{
 			ExecuteSceneRuntimeStop(m_ActiveScene.get());
-			ParkourSystem::OnRuntimeStop(m_ActiveScene.get());
 		}
 		catch (const std::exception& e)
 		{
@@ -302,6 +311,7 @@ namespace Quentlam
 		m_bIsPaused = false;
 		m_ToolbarTransitionProgress = 0.0f;
 		m_IsSceneTransitioning = false;
+		Application::Get().GetImGuiLayer()->SetGameModeActive(false);
 	}
 
 	void EditorLayer::OnScenePause()
@@ -341,10 +351,6 @@ namespace Quentlam
 		style.CenterCircleSize = 6.0f;
 
 		m_Texture2D = Texture2D::Create("assets/texture/background.png");
-		m_SpriteSheet = Texture2D::Create("assets/game/textures/RPGpack_sheet_2X.png");
-		m_TextureStairs = SubTexture2D::CreateFromCoords(m_SpriteSheet, { 7,6 }, { 128,128 });
-		m_TextureBarrel = SubTexture2D::CreateFromCoords(m_SpriteSheet, { 8,2 }, { 128,128 });
-		m_TextureTree = SubTexture2D::CreateFromCoords(m_SpriteSheet, { 2,1 }, { 128,128 }, { 1,2 });
 
 
 
@@ -372,11 +378,11 @@ namespace Quentlam
 		m_Framebuffer = FrameBuffer::Create(fbSpec);
 
 		m_ActiveScene = CreateRef<Scene>();
-		if (!ParkourSystem::LoadScene(m_ActiveScene.get(), "assets/configs/ParkourTemplate.scene"))
-		{
-			QL_CORE_WARN("Failed to load scene preset. Building default scene.");
-			ParkourSystem::BuildScene(m_ActiveScene.get());
-		}
+		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+
+		// Initialize TileMap for editor
+		m_EditorTileMap.SetName("EditorTileMap");
+		m_TileMapEditor.SetTileMap(&m_EditorTileMap);
 	}
 
 	void EditorLayer::OnDetach()
@@ -416,10 +422,19 @@ namespace Quentlam
 		{
 			if (m_SceneState == SceneState::Edit)
 			{
-				ParkourSystem::SaveScene(m_ActiveScene.get(), "assets/configs/ParkourTemplate.scene");
-				QL_CORE_INFO("Saved Scene to assets/configs/ParkourTemplate.scene via shortcut");
-				m_ShowSaveNotification = true;
-				m_SaveNotificationTimer = 2.0f; // Show for 2 seconds
+				if (!m_ScenePath.empty())
+				{
+					SceneManager::Get().SaveScene(m_ScenePath);
+					QL_CORE_INFO("Scene saved: {0}", m_ScenePath);
+					m_ShowSaveNotification = true;
+					m_SaveNotificationTimer = 2.0f;
+				}
+				else
+				{
+					QL_CORE_WARN("No scene path set. Use File > Save As.");
+					m_ShowSaveNotification = true;
+					m_SaveNotificationTimer = 3.0f;
+				}
 			}
 			else
 			{
@@ -429,13 +444,126 @@ namespace Quentlam
 			}
 		}
 
+		if (control && !shift && e.GetKeyCode() == Key::O)
+		{
+			if (m_SceneState == SceneState::Edit)
+			{
+				QL_CORE_INFO("Scene open shortcut pressed. Use File > Open to load a scene.");
+				m_ShowSaveNotification = true;
+				m_SaveNotificationTimer = 2.0f;
+			}
+		}
+
+		if (control && !shift && e.GetKeyCode() == Key::Z)
+		{
+			m_CommandStack.Undo();
+			return true;
+		}
+
+		if (control && !shift && e.GetKeyCode() == Key::Y)
+		{
+			m_CommandStack.Redo();
+			return true;
+		}
+
+		if (control && !shift && e.GetKeyCode() == Key::C)
+		{
+			if (m_SelectedEntity && m_SceneState == SceneState::Edit)
+			{
+				m_CopiedEntity = static_cast<entt::entity>(m_SelectedEntity);
+				QL_CORE_INFO("Entity copied: {0}", m_SelectedEntity.GetComponent<TagComponent>().Tag);
+			}
+			return true;
+		}
+
+		if (control && !shift && e.GetKeyCode() == Key::V)
+		{
+			if (m_CopiedEntity != entt::null && m_SceneState == SceneState::Edit)
+			{
+				auto& reg = m_ActiveScene->GetRegistry();
+				auto src = m_CopiedEntity;
+				if (!reg.valid(src))
+					return true;
+
+				auto& srcTag = reg.get<TagComponent>(src).Tag;
+				Entity newEntity;
+				auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), srcTag + "_copy", &newEntity);
+				m_CommandStack.Execute(cmd);
+
+				auto dest = static_cast<entt::entity>(newEntity);
+				if (!reg.valid(dest))
+					return true;
+
+				if (reg.all_of<TransformComponent>(src))
+				{
+					auto& srcTc = reg.get<TransformComponent>(src);
+					if (reg.all_of<TransformComponent>(dest))
+						reg.get<TransformComponent>(dest) = srcTc;
+					else
+						reg.emplace<TransformComponent>(dest, srcTc);
+				}
+				if (reg.all_of<SpriteRendererComponent>(src))
+				{
+					auto& srcSc = reg.get<SpriteRendererComponent>(src);
+					if (reg.all_of<SpriteRendererComponent>(dest))
+						reg.get<SpriteRendererComponent>(dest) = srcSc;
+					else
+						reg.emplace<SpriteRendererComponent>(dest, srcSc);
+				}
+				if (reg.all_of<SpriteTransformComponent>(src))
+				{
+					auto& srcStc = reg.get<SpriteTransformComponent>(src);
+					if (reg.all_of<SpriteTransformComponent>(dest))
+						reg.get<SpriteTransformComponent>(dest) = srcStc;
+					else
+						reg.emplace<SpriteTransformComponent>(dest, srcStc);
+				}
+				if (reg.all_of<TriangleRendererComponent>(src))
+				{
+					auto& srcTrc = reg.get<TriangleRendererComponent>(src);
+					if (reg.all_of<TriangleRendererComponent>(dest))
+						reg.get<TriangleRendererComponent>(dest) = srcTrc;
+					else
+						reg.emplace<TriangleRendererComponent>(dest, srcTrc);
+				}
+				if (reg.all_of<CubeRendererComponent>(src))
+				{
+					auto& srcCrc = reg.get<CubeRendererComponent>(src);
+					if (reg.all_of<CubeRendererComponent>(dest))
+						reg.get<CubeRendererComponent>(dest) = srcCrc;
+					else
+						reg.emplace<CubeRendererComponent>(dest, srcCrc);
+				}
+				if (reg.all_of<PrimitiveRendererComponent>(src))
+				{
+					auto& srcPrc = reg.get<PrimitiveRendererComponent>(src);
+					if (reg.all_of<PrimitiveRendererComponent>(dest))
+						reg.get<PrimitiveRendererComponent>(dest) = srcPrc;
+					else
+						reg.emplace<PrimitiveRendererComponent>(dest, srcPrc);
+				}
+
+				if (reg.all_of<TransformComponent>(dest))
+				{
+					auto& tc = reg.get<TransformComponent>(dest);
+					tc.Transform[3][0] += 0.5f;
+					tc.Transform[3][1] += 0.5f;
+				}
+				m_SelectedEntity = newEntity;
+			}
+			return true;
+		}
+
 		switch (e.GetKeyCode())
 		{
 			case Key::Delete:
 			{
-				if (m_SelectedEntity)
+				if (m_SelectedEntity && m_SceneState == SceneState::Edit)
 				{
-					m_ActiveScene->GetRegistry().destroy(m_SelectedEntity);
+					auto cmd = std::make_shared<DeleteEntityCommand>(
+						m_ActiveScene.get(),
+						static_cast<entt::entity>(m_SelectedEntity));
+					m_CommandStack.Execute(cmd);
 					m_SelectedEntity = {};
 				}
 				break;
@@ -673,23 +801,12 @@ namespace Quentlam
 		{
 			case SceneState::Edit:
 			{
-				// In Edit mode, continuously sync the Player's visual Transform back to the StartPosition
-				// so that wherever the user dragged it, it will be saved correctly and start there when Play is pressed.
-				auto playerView = m_ActiveScene->GetRegistry().view<PlayerControllerComponent, TransformComponent>();
-				for (auto entity : playerView)
-				{
-					auto& pc = playerView.get<PlayerControllerComponent>(entity);
-					auto& tc = playerView.get<TransformComponent>(entity);
-					pc.StartPosition = { tc.Transform[3].x, tc.Transform[3].y };
-				}
-
 				m_ActiveScene->OnUpdate(ts);
 				break;
 			}
 			case SceneState::Play:
 			{
 				m_ActiveScene->OnUpdateRuntime(ts);
-				ParkourSystem::OnUpdate(m_ActiveScene.get(), ts);
 				break;
 			}
 			case SceneState::Pause:
@@ -699,75 +816,16 @@ namespace Quentlam
 			}
 		}
 
-				// Make camera follow player in both Edit and Play states
+				// Keep the 2D camera logic generic; no game-specific follow target.
 		if (!m_Is3DCamera)
 		{
-			bool isMainMenu = false;
-			auto uiView = m_ActiveScene->GetRegistry().view<UIFlowComponent>();
-			for (auto entity : uiView)
+			glm::vec3 currentPos = m_CameraController.GetPosition();
+			glm::vec3 targetPos = currentPos;
+
+			if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
 			{
-				if (uiView.get<UIFlowComponent>(entity).CurrentState == UIFlowComponent::State::MainMenu)
-					isMainMenu = true;
-			}
-
-			auto view = m_ActiveScene->GetRegistry().view<PlayerControllerComponent, TransformComponent>();
-			for (auto entity : view)
-			{
-				auto& tc = view.get<TransformComponent>(entity);
-				auto& player = view.get<PlayerControllerComponent>(entity);
-
-				if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
-				{
-					if (m_ActiveScene->GetRegistry().valid(entity) && m_ActiveScene->GetRegistry().all_of<SimpleParticleSystemComponent>(entity))
-					{
-						auto& psc = m_ActiveScene->GetRegistry().get<SimpleParticleSystemComponent>(entity);
-						for (auto& particle : psc.ParticlePool)
-						{
-							if (!particle.Active) continue;
-							float life = particle.LifeRemaining / particle.LifeTime;
-							glm::vec4 color = glm::mix(particle.ColorEnd, particle.ColorBegin, life);
-							color.a = color.a * life;
-							float size = glm::mix(particle.SizeEnd, particle.SizeBegin, life);
-							Renderer2D::DrawRotatedQuad(particle.Position, { size, size }, particle.Rotation, color);
-						}
-					}
-				}
-
-				glm::vec3 currentPos = m_CameraController.GetPosition();
-				
-				glm::vec3 targetPos;
-				float lerpSpeed;
-				
-				if (isMainMenu)
-				{
-					// Follow slowly and ignore Y (hover effect) to act like a background plane
-					targetPos = { tc.Transform[3].x, 0.0f, 0.0f };
-					lerpSpeed = 2.0f;
-				}
-				else
-				{
-					// Smoothly track the ship in game (or Edit mode)
-					targetPos = { tc.Transform[3].x, tc.Transform[3].y, 0.0f };
-					lerpSpeed = 20.0f;
-				}
-				
-				// Apply smoothing only in Play or Pause state, otherwise snap immediately to avoid crazy fast scrolling in Edit mode
-				if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
-				{
-					glm::vec3 newPos = currentPos + (targetPos - currentPos) * (lerpSpeed * (float)ts);
-					m_CameraController.SetPosition(newPos);
-				}
-				else
-				{
-					// If we have selected the player ship in Edit mode, don't force snap camera!
-					// Let the user drag it freely with ImGuizmo without the camera fighting them.
-					if (!m_SelectedEntity || m_SelectedEntity != entity)
-					{
-						m_CameraController.SetPosition(targetPos);
-					}
-				}
-				
-				break;
+				glm::vec3 newPos = currentPos + (targetPos - currentPos) * (2.0f * (float)ts);
+				m_CameraController.SetPosition(newPos);
 			}
 		}
 		
@@ -1013,47 +1071,9 @@ namespace Quentlam
 
 		ImGui::SameLine(0, std::round(8.0f * uiScale * viewport->DpiScale));
 		
-		Ref<Texture2D> nullIcon;
-		if (DrawToolbarActionButton("RestartScene", "重置", nullIcon, buttonSize, layout.IconInset, false))
-		{
-			if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
-			{
-				OnSceneStop();
-				
-				// Clear selections before destroying scene
-				m_SelectedEntity = {};
-				m_HoveredEntity = {};
-
-				// Reload the scene to reset everything to initial state
-				m_ActiveScene = CreateRef<Scene>();
-				if (!ParkourSystem::LoadScene(m_ActiveScene.get(), "assets/configs/ParkourTemplate.scene"))
-				{
-					ParkourSystem::BuildScene(m_ActiveScene.get());
-				}
-
-				OnScenePlay();
-				OnScenePause();
-			}
-			else
-			{
-				// Clear selections before destroying scene
-				m_SelectedEntity = {};
-				m_HoveredEntity = {};
-
-				// Even in edit mode, reload to ensure it's fresh, then start and pause
-				m_ActiveScene = CreateRef<Scene>();
-				if (!ParkourSystem::LoadScene(m_ActiveScene.get(), "assets/configs/ParkourTemplate.scene"))
-				{
-					ParkourSystem::BuildScene(m_ActiveScene.get());
-				}
-
-				OnScenePlay();
-				OnScenePause();
-			}
-		}
 		if (ImGui::IsItemHovered())
 		{
-			ImGui::SetTooltip("重新开始 (Restart)");
+			ImGui::SetTooltip("重置场景到初始状态");
 		}
 
 		ImGui::PopStyleVar();
@@ -1116,143 +1136,281 @@ namespace Quentlam
 
 		if (ImGui::BeginMenuBar())
 		{
-			if (ImGui::BeginMenu("文件"))
+		if (ImGui::BeginMenu("文件"))
+		{
+			if (ImGui::MenuItem("新建场景", "Ctrl+N"))
 			{
-				if (ImGui::MenuItem("保存场景预设", "Ctrl+S"))
+				if (m_SceneState == SceneState::Edit)
 				{
-					if (m_SceneState == SceneState::Edit)
+					m_ActiveScene = CreateRef<Scene>();
+					m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+					m_SelectedEntity = {};
+					m_ScenePath.clear();
+					QL_CORE_INFO("New scene created");
+				}
+			}
+			if (ImGui::MenuItem("保存场景", "Ctrl+S"))
+			{
+				if (m_SceneState == SceneState::Edit)
+				{
+					if (!m_ScenePath.empty())
 					{
-						ParkourSystem::SaveScene(m_ActiveScene.get(), "assets/configs/ParkourTemplate.scene");
-						QL_CORE_INFO("Saved Scene to assets/configs/ParkourTemplate.scene");
+						SceneManager::Get().SaveScene(m_ScenePath);
+						QL_CORE_INFO("Scene saved: {0}", m_ScenePath);
 						m_ShowSaveNotification = true;
 						m_SaveNotificationTimer = 2.0f;
 					}
 					else
 					{
-						QL_CORE_WARN("Cannot save scene while playing. Please stop the scene first.");
+						QL_CORE_WARN("No scene path set. Use File > Save As.");
 						m_ShowSaveNotification = true;
 						m_SaveNotificationTimer = 3.0f;
 					}
 				}
-				if (ImGui::MenuItem("退出"))
-					Application::Get().Close();
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("窗口"))
-			{
-				ImGui::MenuItem("内容浏览器", NULL, &m_IsContentBrowserOpen);
-				ImGui::MenuItem("显示物理碰撞箱", NULL, &m_ShowPhysicsColliders);
-				ImGui::EndMenu();
-			}
-
-			if (ImGui::BeginMenu("游戏对象"))
-			{
-				if (ImGui::BeginMenu("3D 对象"))
+				else
 				{
-					if (ImGui::MenuItem("物理演示平面"))
+					QL_CORE_WARN("Cannot save scene while playing. Please stop the scene first.");
+					m_ShowSaveNotification = true;
+					m_SaveNotificationTimer = 3.0f;
+				}
+			}
+			if (ImGui::MenuItem("另存为...", NULL))
+			{
+				if (m_SceneState == SceneState::Edit)
+				{
+					std::string savePath = "assets/scenes/Untitled.scene";
+					SceneManager::Get().SaveScene(savePath);
+					m_ScenePath = savePath;
+					QL_CORE_INFO("Scene saved as: {0}", savePath);
+					m_ShowSaveNotification = true;
+					m_SaveNotificationTimer = 2.0f;
+				}
+				else
+				{
+					QL_CORE_WARN("Cannot save scene while playing. Please stop the scene first.");
+					m_ShowSaveNotification = true;
+					m_SaveNotificationTimer = 3.0f;
+				}
+			}
+			if (ImGui::MenuItem("打开场景...", "Ctrl+O"))
+			{
+				if (m_SceneState == SceneState::Edit)
+				{
+					std::string loadPath = "assets/scenes/Default.scene";
+					if (std::filesystem::exists(loadPath))
 					{
-						Entity plane = m_ActiveScene->CreateEntity("PhysicsDemoPlane");
-						auto& tc = plane.GetComponent<TransformComponent>();
-						tc.Transform = glm::scale(glm::mat4(1.0f), glm::vec3(10.0f, 0.1f, 10.0f));
-
-						plane.AddComponent<CubeRendererComponent>(glm::vec4(0.5f, 0.8f, 0.5f, 1.0f));
-
-						auto& rb3d = plane.AddComponent<Rigidbody3DComponent>();
-						rb3d.Type = Rigidbody3DComponent::BodyType::Kinematic;
-						rb3d.Mass = 1.0f;
-
-						auto& bc3d = plane.AddComponent<BoxCollider3DComponent>();
-						bc3d.HalfExtent = glm::vec3(5.0f, 0.05f, 5.0f); // 10 * 0.5, 0.1 * 0.5, 10 * 0.5
-						
-						m_SelectedEntity = plane;
+						m_ActiveScene = CreateRef<Scene>();
+						m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+						SceneSerializer serializer(m_ActiveScene.get());
+						if (serializer.Deserialize(loadPath))
+						{
+							m_ScenePath = loadPath;
+							m_SelectedEntity = {};
+							QL_CORE_INFO("Scene loaded: {0}", loadPath);
+							m_ShowSaveNotification = true;
+							m_SaveNotificationTimer = 2.0f;
+						}
 					}
+					else
+					{
+						QL_CORE_WARN("Scene file not found: {0}", loadPath);
+						m_ShowSaveNotification = true;
+						m_SaveNotificationTimer = 3.0f;
+					}
+				}
+			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("退出"))
+				Application::Get().Close();
+			ImGui::EndMenu();
+		}
 
-					ImGui::Separator();
+		if (ImGui::BeginMenu("窗口"))
+		{
+			ImGui::MenuItem("内容浏览器", NULL, &m_IsContentBrowserOpen);
+			ImGui::MenuItem("UI 层级面板", NULL, &m_ShowUIHierarchy);
+			ImGui::MenuItem("UI 画布编辑器", NULL, &m_ShowUICanvasEditor);
+			ImGui::MenuItem("瓦片地图编辑器", NULL, &m_ShowTileMapEditor);
+			ImGui::MenuItem("材质编辑器", NULL, &m_ShowMaterialEditor);
+			ImGui::MenuItem("显示物理碰撞箱", NULL, &m_ShowPhysicsColliders);
+			ImGui::EndMenu();
+		}
 
-					auto createPrimitive = [&](const char* name, PrimitiveRendererComponent::PrimitiveType type) {
-						static int counter = 1;
-						char buffer[64];
-						snprintf(buffer, sizeof(buffer), "%s_%03d", name, counter++);
-						Entity entity = m_ActiveScene->CreateEntity(buffer);
-						entity.AddComponent<PrimitiveRendererComponent>(type);
-						m_SelectedEntity = entity;
-					};
+		if (ImGui::BeginMenu("游戏对象"))
+		{
+			if (ImGui::BeginMenu("3D 对象"))
+			{
+				auto createPrimitive = [&](const char* name, PrimitiveRendererComponent::PrimitiveType type) {
+					static int counter = 1;
+					char buffer[64];
+					snprintf(buffer, sizeof(buffer), "%s_%03d", name, counter++);
+					Entity entity;
+					auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), buffer, &entity);
+					m_CommandStack.Execute(cmd);
+					entity.AddComponent<PrimitiveRendererComponent>(type);
+					m_SelectedEntity = entity;
+				};
 
-					if (ImGui::MenuItem("立方体")) createPrimitive("Cube", PrimitiveRendererComponent::PrimitiveType::Cube);
-					if (ImGui::MenuItem("球体")) createPrimitive("Sphere", PrimitiveRendererComponent::PrimitiveType::Sphere);
-					if (ImGui::MenuItem("圆柱体")) createPrimitive("Cylinder", PrimitiveRendererComponent::PrimitiveType::Cylinder);
-					if (ImGui::MenuItem("胶囊体")) createPrimitive("Capsule", PrimitiveRendererComponent::PrimitiveType::Capsule);
-					if (ImGui::MenuItem("圆锥体")) createPrimitive("Cone", PrimitiveRendererComponent::PrimitiveType::Cone);
-					if (ImGui::MenuItem("圆环")) createPrimitive("Torus", PrimitiveRendererComponent::PrimitiveType::Torus);
+				if (ImGui::MenuItem("立方体")) createPrimitive("Cube", PrimitiveRendererComponent::PrimitiveType::Cube);
+				if (ImGui::MenuItem("球体")) createPrimitive("Sphere", PrimitiveRendererComponent::PrimitiveType::Sphere);
+				if (ImGui::MenuItem("圆柱体")) createPrimitive("Cylinder", PrimitiveRendererComponent::PrimitiveType::Cylinder);
+				if (ImGui::MenuItem("胶囊体")) createPrimitive("Capsule", PrimitiveRendererComponent::PrimitiveType::Capsule);
+				if (ImGui::MenuItem("圆锥体")) createPrimitive("Cone", PrimitiveRendererComponent::PrimitiveType::Cone);
+				if (ImGui::MenuItem("圆环")) createPrimitive("Torus", PrimitiveRendererComponent::PrimitiveType::Torus);
 
-					ImGui::EndMenu();
+				ImGui::Separator();
+
+				if (ImGui::MenuItem("物理演示平面"))
+				{
+					Entity entity;
+					auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), "PhysicsDemoPlane", &entity);
+					m_CommandStack.Execute(cmd);
+					auto& tc = entity.GetComponent<TransformComponent>();
+					tc.Transform = glm::scale(glm::mat4(1.0f), glm::vec3(10.0f, 0.1f, 10.0f));
+
+					entity.AddComponent<CubeRendererComponent>(glm::vec4(0.5f, 0.8f, 0.5f, 1.0f));
+
+					auto& rb3d = entity.AddComponent<Rigidbody3DComponent>();
+					rb3d.Type = Rigidbody3DComponent::BodyType::Kinematic;
+					rb3d.Mass = 1.0f;
+
+					auto& bc3d = entity.AddComponent<BoxCollider3DComponent>();
+					bc3d.HalfExtent = glm::vec3(5.0f, 0.05f, 5.0f);
+
+					m_SelectedEntity = entity;
+				}
+
+				ImGui::EndMenu();
+			}
+
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("创建空对象 (Create Empty)"))
+			{
+				static int counter = 1;
+				char buffer[64];
+				snprintf(buffer, sizeof(buffer), "Empty_%03d", counter++);
+				Entity entity;
+				auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), buffer, &entity);
+				m_CommandStack.Execute(cmd);
+				m_SelectedEntity = entity;
+			}
+
+			if (ImGui::BeginMenu("2D 对象"))
+			{
+				if (ImGui::MenuItem("精灵 (Sprite)"))
+				{
+					static int counter = 1;
+					char buffer[64];
+					snprintf(buffer, sizeof(buffer), "Sprite_%03d", counter++);
+					Entity entity;
+					auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), buffer, &entity);
+					m_CommandStack.Execute(cmd);
+					entity.AddComponent<SpriteRendererComponent>();
+					m_SelectedEntity = entity;
 				}
 				ImGui::EndMenu();
 			}
 
-			ImGui::EndMenuBar();
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("复制对象 (Duplicate)"))
+			{
+				if (m_SelectedEntity)
+				{
+					auto& oldTag = m_SelectedEntity.GetComponent<TagComponent>();
+					auto newEntity = m_ActiveScene->CreateEntity(oldTag.Tag + "_copy");
+					if (m_SelectedEntity.HasComponent<TransformComponent>())
+						newEntity.AddComponent<TransformComponent>(m_SelectedEntity.GetComponent<TransformComponent>());
+					if (m_SelectedEntity.HasComponent<SpriteRendererComponent>())
+						newEntity.AddComponent<SpriteRendererComponent>(m_SelectedEntity.GetComponent<SpriteRendererComponent>());
+					if (m_SelectedEntity.HasComponent<SpriteTransformComponent>())
+						newEntity.AddComponent<SpriteTransformComponent>(m_SelectedEntity.GetComponent<SpriteTransformComponent>());
+					if (m_SelectedEntity.HasComponent<TriangleRendererComponent>())
+						newEntity.AddComponent<TriangleRendererComponent>(m_SelectedEntity.GetComponent<TriangleRendererComponent>());
+					if (m_SelectedEntity.HasComponent<CubeRendererComponent>())
+						newEntity.AddComponent<CubeRendererComponent>(m_SelectedEntity.GetComponent<CubeRendererComponent>());
+					m_SelectedEntity = newEntity;
+				}
+			}
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("组件 (Component)"))
+		{
+			if (m_SelectedEntity)
+			{
+				if (!m_SelectedEntity.HasComponent<SpriteAnimationComponent>())
+				{
+					if (ImGui::MenuItem("渲染 / 精灵动画 (Sprite Animation)"))
+					{
+						m_SelectedEntity.AddComponent<SpriteAnimationComponent>();
+					}
+				}
+			}
+			ImGui::EndMenu();
+		}
+
+		ImGui::EndMenuBar();
 		}
 
 		UI_Toolbar();
 
-		if (m_ShowSaveNotification)
-		{
-			ImGui::SetNextWindowPos(ImVec2(m_ViewportBounds[0].x + (m_ViewportBounds[1].x - m_ViewportBounds[0].x) * 0.5f, m_ViewportBounds[0].y + (m_ViewportBounds[1].y - m_ViewportBounds[0].y) * 0.8f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-			ImGui::SetNextWindowBgAlpha(m_SaveNotificationTimer > 0.5f ? 0.8f : (m_SaveNotificationTimer / 0.5f) * 0.8f);
-			ImGui::Begin("Save Notification", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs);
-			if (m_SceneState == SceneState::Edit)
-				ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "场景预设已保存 (Scene Saved) - Ctrl+S");
-			else
-				ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.0f, 1.0f), "请先停止游戏再保存! (Stop Game to Save)");
-			ImGui::End();
-		}
-
-		if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
-		{
-			// Render UI
-			auto uiView = m_ActiveScene->GetRegistry().view<UIFlowComponent, ScoreSystemComponent>();
-			for (auto [entity, ui, score] : uiView.each())
-			{
-				ImGui::Begin("游戏UI (Game UI)", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
-				ImGui::SetWindowPos(ImVec2(m_ViewportBounds[0].x + 20, m_ViewportBounds[0].y + 20));
-				ImGui::SetWindowFontScale(2.0f);
-				if (ui.CurrentState == UIFlowComponent::State::GameOver)
-				{
-					ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "游戏结束 (GAME OVER)");
-					ImGui::Text("最终得分 (Final Score): %d", score.CurrentScore);
-				}
-				else
-				{
-					ImGui::Text("得分 (Score): %d", score.CurrentScore);
-				}
-				ImGui::SetWindowFontScale(1.0f);
-				ImGui::End();
-			}
-		}
 
 		// Scene Hierarchy Panel
 		ImGui::Begin("场景层级");
 
-		// Extract entities to sort and group
+		static char searchBuffer[128] = {};
+		ImGui::SetNextItemWidth(-1.0f);
+		ImGui::InputText("搜索", searchBuffer, sizeof(searchBuffer));
+		ImGui::Separator();
+
+		// Extract entities to sort
 		std::vector<entt::entity> allEntities;
 		for (auto entityID : m_ActiveScene->GetRegistry().view<TagComponent>())
 		{
+			if (searchBuffer[0] != '\0')
+			{
+				Entity e{ entityID, m_ActiveScene.get() };
+				auto& tag = e.GetComponent<TagComponent>().Tag;
+				std::string search = searchBuffer;
+				std::string lowerTag = tag;
+				std::transform(lowerTag.begin(), lowerTag.end(), lowerTag.begin(), ::tolower);
+				std::transform(search.begin(), search.end(), search.begin(), ::tolower);
+				if (lowerTag.find(search) == std::string::npos)
+					continue;
+			}
 			allEntities.push_back(entityID);
 		}
 
 		auto drawEntityNode = [&](entt::entity entityID) {
 			Entity entity{ entityID, m_ActiveScene.get() };
 			auto& tag = entity.GetComponent<TagComponent>().Tag;
-			ImGuiTreeNodeFlags flags = ((m_SelectedEntity == entity) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
-			flags |= ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf; // Make leaf so it doesn't look like folder
-			
+			bool isSelected = std::find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity) != m_SelectedEntities.end();
+			ImGuiTreeNodeFlags flags = (isSelected ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow;
+			flags |= ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_Leaf;
+
 			bool opened = ImGui::TreeNodeEx((void*)(uint64_t)(uint32_t)entityID, flags, tag.c_str());
 			if (ImGui::IsItemClicked())
 			{
+				bool shift = Input::IsKeyPressed(Key::LeftShift) || Input::IsKeyPressed(Key::RightShift);
+				if (shift)
+				{
+					auto it = std::find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity);
+					if (it != m_SelectedEntities.end())
+						m_SelectedEntities.erase(it);
+					else
+						m_SelectedEntities.push_back(entity);
+				}
+				else
+				{
+					m_SelectedEntities.clear();
+					m_SelectedEntities.push_back(entity);
+				}
 				m_SelectedEntity = entity;
 			}
-			
+
 			bool entityDeleted = false;
 			if (ImGui::BeginPopupContextItem())
 			{
@@ -1260,72 +1418,56 @@ namespace Quentlam
 					entityDeleted = true;
 				ImGui::EndPopup();
 			}
-			
+
 			if (opened)
 			{
 				ImGui::TreePop();
 			}
-			
+
 			if (entityDeleted)
 			{
+				auto it = std::find(m_SelectedEntities.begin(), m_SelectedEntities.end(), entity);
+				if (it != m_SelectedEntities.end())
+					m_SelectedEntities.erase(it);
 				if (m_SelectedEntity == entity)
 					m_SelectedEntity = {};
 				m_ActiveScene->GetRegistry().destroy(entityID);
 			}
 		};
 
-		// 1. Group "Pillars"
-		if (ImGui::TreeNodeEx("障碍物组", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth))
-		{
-			for (auto it = allEntities.begin(); it != allEntities.end();)
-			{
-				Entity entity{ *it, m_ActiveScene.get() };
-				if (entity.GetComponent<TagComponent>().Tag.find("Pillar") == 0 || entity.GetComponent<TagComponent>().Tag == "ObstacleSpawner")
-				{
-					drawEntityNode(*it);
-					it = allEntities.erase(it);
-				}
-				else
-				{
-					++it;
-				}
-			}
-			ImGui::TreePop();
-		}
-
-		// 2. Group "Environment"
-		if (ImGui::TreeNodeEx("环境组", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth))
-		{
-			for (auto it = allEntities.begin(); it != allEntities.end();)
-			{
-				Entity entity{ *it, m_ActiveScene.get() };
-				const auto& tag = entity.GetComponent<TagComponent>().Tag;
-				if (tag == "Background" || tag == "Floor" || tag == "Ceiling")
-				{
-					drawEntityNode(*it);
-					it = allEntities.erase(it);
-				}
-				else
-				{
-					++it;
-				}
-			}
-			ImGui::TreePop();
-		}
-
-		// 3. Draw remaining ungrouped entities
+		// Draw all entities as a flat list (generic engine, no game-specific grouping)
 		for (auto entityID : allEntities)
 		{
 			drawEntityNode(entityID);
 		}
 
 		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+		{
+			m_SelectedEntities.clear();
 			m_SelectedEntity = {};
+		}
 
 		if (ImGui::BeginPopupContextWindow(0, 1 | ImGuiPopupFlags_NoOpenOverItems))
 		{
 			if (ImGui::MenuItem("创建空实体"))
-				m_ActiveScene->CreateEntity("Empty Entity");
+			{
+				auto cmd = std::make_shared<CreateEntityCommand>(m_ActiveScene.get(), "Empty Entity", nullptr);
+				m_CommandStack.Execute(cmd);
+			}
+			if (!m_SelectedEntities.empty() && ImGui::MenuItem(("删除选中实体 (" + std::to_string(m_SelectedEntities.size()) + ")").c_str()))
+			{
+				std::vector<std::shared_ptr<ICommand>> deleteCommands;
+				deleteCommands.reserve(m_SelectedEntities.size());
+				for (auto& e : m_SelectedEntities)
+				{
+					deleteCommands.push_back(std::make_shared<DeleteEntityCommand>(
+						m_ActiveScene.get(), static_cast<entt::entity>(e)));
+				}
+				auto batchCmd = std::make_shared<BatchCommand>("Delete Entities", deleteCommands);
+				m_CommandStack.Execute(batchCmd);
+				m_SelectedEntities.clear();
+				m_SelectedEntity = {};
+			}
 			ImGui::EndPopup();
 		}
 		ImGui::End();
@@ -1398,6 +1540,85 @@ namespace Quentlam
 					ImGui::Text("2D 精灵渲染组件，用于控制颜色和基础材质。");
 					ImGui::Spacing();
 					ImGui::ColorEdit4("基础颜色 (Base Color)", glm::value_ptr(color));
+					ImGui::TreePop();
+				}
+			}
+
+			if (m_SelectedEntity.HasComponent<SpriteRendererComponent>())
+			{
+				const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
+				ImGui::Separator();
+				bool open = ImGui::TreeNodeEx((void*)typeid(SpriteRendererComponent).hash_code(), treeNodeFlags, "🖼 Sprite Renderer2 (高级2D渲染)");
+				ImGui::PopStyleVar();
+
+				if (open)
+				{
+					auto& src = m_SelectedEntity.GetComponent<SpriteRendererComponent>();
+					ImGui::Text("高级2D精灵渲染，支持材质、Tiling和翻转。");
+					ImGui::Spacing();
+					ImGui::ColorEdit4("颜色 (Color)", glm::value_ptr(src.Color));
+					ImGui::DragFloat2("尺寸 (Size)", glm::value_ptr(src.Size), 0.1f);
+					ImGui::DragFloat("Tiling Factor", &src.TilingFactor, 0.1f, 0.1f, 100.0f);
+					ImGui::Checkbox("Flip X", &src.FlipX);
+					ImGui::SameLine();
+					ImGui::Checkbox("Flip Y", &src.FlipY);
+
+					// Material selector
+					{
+						const char* preview = src.Material ? src.Material->GetName().c_str() : "(Default Sprite)";
+						if (ImGui::BeginCombo("Material", preview))
+						{
+							if (ImGui::Selectable("(Default Sprite)", !src.Material))
+								src.Material = nullptr;
+
+							auto& defaults = MaterialDefaults::GetAllDefaults();
+							for (auto& [name, mat] : defaults)
+							{
+								if (ImGui::Selectable(name.c_str(), src.Material && src.Material->GetName() == name))
+									src.Material = mat;
+							}
+
+							ImGui::EndCombo();
+						}
+					}
+					ImGui::TreePop();
+				}
+			}
+
+			if (m_SelectedEntity.HasComponent<SpriteAnimationComponent>())
+			{
+				const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
+				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
+				ImGui::Separator();
+				bool open = ImGui::TreeNodeEx((void*)typeid(SpriteAnimationComponent).hash_code(), treeNodeFlags, "🎞 Sprite Animation (精灵动画)");
+				ImGui::PopStyleVar();
+
+				if (open)
+				{
+					auto& anim = m_SelectedEntity.GetComponent<SpriteAnimationComponent>();
+					ImGui::Checkbox("Auto Play", &anim.AutoPlay);
+					if (anim.Animator)
+					{
+						ImGui::Text("State: %s", anim.Animator->IsPlaying() ? "Playing" : "Stopped");
+						ImGui::Text("Current Frame: %d", anim.GetCurrentFrameIndex());
+						auto clip = anim.GetCurrentClip();
+						if (clip)
+							ImGui::Text("Clip: %s", clip->GetName().c_str());
+
+						if (ImGui::Button("Play"))
+							anim.Play(anim.DefaultClipName);
+						ImGui::SameLine();
+						if (ImGui::Button("Stop"))
+							anim.Stop();
+						ImGui::SameLine();
+						if (ImGui::Button("Pause"))
+							anim.Pause();
+					}
+					else
+					{
+						ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.2f, 1.0f), "No animator set. Load an animation JSON to initialize.");
+					}
 					ImGui::TreePop();
 				}
 			}
@@ -1613,45 +1834,6 @@ namespace Quentlam
 				}
 			}
 
-			if (m_SelectedEntity.HasComponent<PlayerControllerComponent>())
-			{
-				const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
-				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
-				ImGui::Separator();
-				bool open = ImGui::TreeNodeEx((void*)typeid(PlayerControllerComponent).hash_code(), treeNodeFlags, "🚀 Player Controller (玩家控制)");
-				ImGui::PopStyleVar();
-
-				if (open)
-				{
-					auto& pc = m_SelectedEntity.GetComponent<PlayerControllerComponent>();
-					ImGui::DragFloat("引擎推力 (Engine Power)", &pc.EnginePower, 0.1f, 0.0f, 50.0f);
-					ImGui::DragFloat("最大上升速度 (Max Velocity Y)", &pc.MaxVelocityY, 0.1f, 0.0f, 50.0f);
-					ImGui::DragFloat2("初始速度 (Start Velocity)", glm::value_ptr(pc.StartVelocity), 0.1f);
-					ImGui::DragFloat("旋转速度-慢 (Rotation Speed Slow)", &pc.RotationSpeedSlow, 1.0f);
-					ImGui::DragFloat("旋转速度-快 (Rotation Speed Fast)", &pc.RotationSpeedFast, 1.0f);
-					ImGui::TreePop();
-				}
-			}
-
-			if (m_SelectedEntity.HasComponent<ObstacleSpawnerComponent>())
-			{
-				const ImGuiTreeNodeFlags treeNodeFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap | ImGuiTreeNodeFlags_FramePadding;
-				ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{ 4, 4 });
-				ImGui::Separator();
-				bool open = ImGui::TreeNodeEx((void*)typeid(ObstacleSpawnerComponent).hash_code(), treeNodeFlags, "⚙️ Obstacle Spawner (障碍物生成器)");
-				ImGui::PopStyleVar();
-
-				if (open)
-				{
-					auto& osc = m_SelectedEntity.GetComponent<ObstacleSpawnerComponent>();
-					ImGui::DragFloat("最小间隙 (Min Gap)", &osc.MinGap, 0.1f, 1.0f, 20.0f);
-					ImGui::DragFloat("最大间隙 (Max Gap)", &osc.MaxGap, 0.1f, 1.0f, 20.0f);
-					ImGui::DragFloat("X轴间距 (Spacing X)", &osc.SpacingX, 0.1f, 1.0f, 50.0f);
-					ImGui::DragFloat("中心偏移变化 (Center Variation)", &osc.CenterVariation, 0.1f, 0.0f, 20.0f);
-					ImGui::DragFloat("障碍物移动速度 (Move Speed X)", &osc.MoveSpeedX, 0.1f, -50.0f, 0.0f);
-					ImGui::TreePop();
-				}
-			}
 
 			ImGui::Separator();
 			
@@ -1732,16 +1914,6 @@ namespace Quentlam
 				if (!m_SelectedEntity.HasComponent<BoxCollider3DComponent>())
 				{
 					addComponentSafe("3D 碰撞体 (Box Collider 3D)", false, true, [&]() { m_SelectedEntity.AddComponent<BoxCollider3DComponent>(); });
-				}
-
-				if (!m_SelectedEntity.HasComponent<PlayerControllerComponent>())
-				{
-					addComponentSafe("玩家控制 (Player Controller)", false, false, [&]() { m_SelectedEntity.AddComponent<PlayerControllerComponent>(); });
-				}
-
-				if (!m_SelectedEntity.HasComponent<ObstacleSpawnerComponent>())
-				{
-					addComponentSafe("障碍物生成器 (Obstacle Spawner)", false, false, [&]() { m_SelectedEntity.AddComponent<ObstacleSpawnerComponent>(); });
 				}
 
 				ImGui::EndPopup();
@@ -1858,6 +2030,42 @@ namespace Quentlam
 			else
 			{
 				m_SelectedEntity = {};
+			}
+		}
+
+		// TileMap brush painting: left click/drag in viewport paints tiles
+		if (m_ShowTileMapEditor && ImGui::IsWindowHovered() && !ImGuizmo::IsOver() && !ImGui::IsAnyItemActive())
+		{
+			bool clicked = ImGui::IsMouseClicked(0);
+			bool released = ImGui::IsMouseReleased(0);
+			bool dragging = ImGui::IsMouseDown(0);
+
+			if (released)
+			{
+				m_TileMapEditor.HandleBrushStrokeContinuousReset();
+			}
+
+			if (clicked || dragging)
+			{
+				auto [mx, my] = Input::GetMousePosition();
+				float vpW = m_ViewportSize.x;
+				float vpH = m_ViewportSize.y;
+				if (vpW > 0 && vpH > 0)
+				{
+					glm::vec2 ndc = (glm::vec2(mx, my) / glm::vec2(vpW, vpH)) * 2.0f - 1.0f;
+					ndc.y = -ndc.y;
+					glm::mat4 invVP = glm::inverse(m_CameraController.GetCamera().GetViewProjectionMatrix());
+					glm::vec4 world4 = invVP * glm::vec4(ndc, 0.0f, 1.0f);
+					glm::vec3 worldPos = glm::vec3(world4) / world4.w;
+					float tileSize = m_EditorTileMap.GetTileSize();
+					glm::ivec2 gridPos(
+						static_cast<int>(std::floor(worldPos.x / tileSize)),
+						static_cast<int>(std::floor(worldPos.y / tileSize)));
+					if (clicked)
+						m_TileMapEditor.HandleBrushStroke(gridPos);
+					else
+						m_TileMapEditor.HandleBrushStrokeContinuous(gridPos);
+				}
 			}
 		}
 
@@ -2069,7 +2277,7 @@ namespace Quentlam
 				std::string extension = path.extension().string();
 
 				Ref<Texture2D> icon = directoryEntry.is_directory() ? m_DirectoryIcon : m_FileIcon;
-				
+
 				if (!directoryEntry.is_directory())
 				{
 					if (extension == ".uasset") icon = m_IconUASSET;
@@ -2082,7 +2290,7 @@ namespace Quentlam
 				ImVec4 tintColor = ImVec4(1, 1, 1, 1);
 				ImGui::PushID(filenameString.c_str());
 				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-				
+
 				if (ImGui::ImageButton((ImTextureID)(intptr_t)icon->GetRendererID(), { thumbnailSize, thumbnailSize }, { 0, 1 }, { 1, 0 }, -1, ImVec4(0,0,0,0), tintColor))
 				{
 					if (directoryEntry.is_directory())
@@ -2090,13 +2298,37 @@ namespace Quentlam
 						m_CurrentDirectory = (std::filesystem::path(m_CurrentDirectory) / path.filename()).string();
 					}
 				}
-				
-				if (ImGui::BeginDragDropSource())
+
+				// Right-click context menu for files and directories
+				if (ImGui::BeginPopupContextItem("AssetContextMenu"))
 				{
-					auto relativePath = std::filesystem::relative(path, "assets");
-					const wchar_t* itemPath = relativePath.c_str();
-					ImGui::SetDragDropPayload("CONTENT_BROWSER_ITEM", itemPath, (wcslen(itemPath) + 1) * sizeof(wchar_t));
-					ImGui::EndDragDropSource();
+					if (!directoryEntry.is_directory())
+					{
+						if (ImGui::MenuItem("重命名 (Rename)"))
+						{
+							m_RenamingAsset = path.string();
+							memset(m_RenameBuffer, 0, sizeof(m_RenameBuffer));
+							strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer) - 1, filenameString.c_str(), _TRUNCATE);
+						}
+					}
+
+					if (ImGui::MenuItem("在资源管理器中显示 (Show in Explorer)"))
+					{
+						std::string absPath = std::filesystem::absolute(path).string();
+						ShellExecuteA(NULL, "open", "explorer.exe", ("/select,\"" + absPath + "\"").c_str(), NULL, SW_SHOWNORMAL);
+					}
+
+					if (!directoryEntry.is_directory())
+					{
+						ImGui::Separator();
+						if (ImGui::MenuItem("删除 (Delete)", NULL, false, true))
+						{
+							m_DeletingAsset = path.string();
+							ImGui::OpenPopup("ConfirmDelete");
+						}
+					}
+
+					ImGui::EndPopup();
 				}
 
 				ImGui::PopStyleColor();
@@ -2106,11 +2338,117 @@ namespace Quentlam
 				ImGui::NextColumn();
 			}
 
+			// Rename input overlay
+			if (!m_RenamingAsset.empty())
+			{
+				std::filesystem::path oldPath(m_RenamingAsset);
+				std::string oldName = oldPath.filename().string();
+				ImGui::SetNextWindowSize(ImVec2(350, 100), ImGuiCond_Always);
+				if (ImGui::Begin("重命名资产", &m_IsRenamePopupOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
+				{
+					ImGui::Text("重命名: %s", oldName.c_str());
+					if (ImGui::InputText("新名称", m_RenameBuffer, sizeof(m_RenameBuffer), ImGuiInputTextFlags_EnterReturnsTrue))
+					{
+						if (strlen(m_RenameBuffer) > 0)
+						{
+							std::filesystem::path newPath = oldPath.parent_path() / m_RenameBuffer;
+							if (!std::filesystem::exists(newPath))
+							{
+								std::filesystem::rename(oldPath, newPath);
+								QL_CORE_INFO("Renamed: %s -> %s", oldPath.string().c_str(), newPath.string().c_str());
+							}
+							else
+							{
+								QL_CORE_WARN("File already exists: %s", newPath.string().c_str());
+							}
+						}
+						m_RenamingAsset.clear();
+						m_IsRenamePopupOpen = false;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("确定"))
+					{
+						if (strlen(m_RenameBuffer) > 0)
+						{
+							std::filesystem::path newPath = oldPath.parent_path() / m_RenameBuffer;
+							if (!std::filesystem::exists(newPath))
+							{
+								std::filesystem::rename(oldPath, newPath);
+								QL_CORE_INFO("Renamed: %s -> %s", oldPath.string().c_str(), newPath.string().c_str());
+							}
+						}
+						m_RenamingAsset.clear();
+						m_IsRenamePopupOpen = false;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("取消"))
+					{
+						m_RenamingAsset.clear();
+						m_IsRenamePopupOpen = false;
+					}
+					ImGui::End();
+				}
+			}
+
+			// Delete confirmation dialog
+			if (!m_DeletingAsset.empty())
+			{
+				ImGui::SetNextWindowSize(ImVec2(350, 120), ImGuiCond_Always);
+				if (ImGui::Begin("确认删除", &m_IsDeletePopupOpen, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
+				{
+					std::string fn = std::filesystem::path(m_DeletingAsset).filename().string();
+					ImGui::Text("确定要删除以下文件吗？此操作不可撤销。");
+					ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "  %s", fn.c_str());
+					ImGui::Spacing();
+					if (ImGui::Button("删除"))
+					{
+						if (std::filesystem::remove(m_DeletingAsset))
+							QL_CORE_INFO("Deleted: %s", m_DeletingAsset.c_str());
+						else
+							QL_CORE_WARN("Failed to delete: %s", m_DeletingAsset.c_str());
+						m_DeletingAsset.clear();
+						m_IsDeletePopupOpen = false;
+					}
+					ImGui::SameLine();
+					if (ImGui::Button("取消"))
+					{
+						m_DeletingAsset.clear();
+						m_IsDeletePopupOpen = false;
+					}
+					ImGui::End();
+				}
+			}
+
 			ImGui::Columns(1);
 			ImGui::End();
 		}
 
-		ImGui::End();
+		// TileMap Editor Panel
+		if (m_ShowTileMapEditor)
+		{
+			m_TileMapEditor.SetTileMap(&m_EditorTileMap);
+			m_TileMapEditor.OnImGuiRender();
+		}
+
+		// UI Hierarchy Panel
+		if (m_ShowUIHierarchy)
+		{
+			m_UIHierarchyPanel.OnImGuiRender();
+		}
+
+		// UI Canvas Editor
+		if (m_ShowUICanvasEditor)
+		{
+			m_UICanvasEditor.OnImGuiRender();
+		}
+
+		// Material Editor
+		if (m_ShowMaterialEditor)
+		{
+			m_MaterialEditor.OnImGuiRender();
+		}
+
+		ImGui::End(); // Viewport
 
 	}
 

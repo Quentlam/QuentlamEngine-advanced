@@ -21,6 +21,7 @@
 
 #ifdef QL_PLATFORM_WINDOWS
 #include <Windows.h>
-
-
+#ifdef State
+#undef State
+#endif
 #endif 

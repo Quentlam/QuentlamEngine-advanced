@@ -4,6 +4,7 @@
 #include "Application.h"
 #include "../Renderer/Renderer.h"
 #include "Quentlam/Resource/ResourceManager.h"
+#include "Quentlam/Modding/ModdingModule.h"
 
 #include <glfw/glfw3.h>
 
@@ -25,6 +26,10 @@ namespace Quentlam
 
 		ResourceManager::Init();
 		Renderer::Init();
+
+		std::filesystem::path exePath = std::filesystem::current_path() / "mods";
+		ModdingModule::Get().Initialize(exePath.string());
+		QL_CORE_INFO("ModdingModule initialized with mods directory: {0}", exePath.string());
 
 
 
@@ -120,6 +125,8 @@ namespace Quentlam
 
 	bool Application::OnWindowClose(WindowCloseEvent& e)
 	{
+		ModdingModule::Get().Shutdown();
+		QL_CORE_INFO("ModdingModule shutdown complete.");
 		m_Running = false;
 		return true;
 	}

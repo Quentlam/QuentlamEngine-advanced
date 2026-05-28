@@ -42,3 +42,5 @@
 #include "Quentlam/Renderer/Model.h"
 #include "Quentlam/Renderer/Mesh.h"
 
+#include "Quentlam/Audio/AudioModule.h"
+
