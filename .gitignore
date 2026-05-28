@@ -10,6 +10,8 @@
 *.vcxproj
 *.vcxproj.filters
 *.vcxproj.user
+*.Build.CppClean.log
+*.FileListAbsolute.txt
 bin/
 bin-int/
 
