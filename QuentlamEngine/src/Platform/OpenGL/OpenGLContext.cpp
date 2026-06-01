@@ -1,7 +1,7 @@
 #include "qlpch.h"
 #include "OpenGLContext.h"
-#include <GLFW/glfw3.h>
 #include <Glad/glad.h>
+#include <GLFW/glfw3.h>
 namespace Quentlam
 {
 	

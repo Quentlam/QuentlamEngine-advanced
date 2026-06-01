@@ -27,6 +27,8 @@
 #include "Quentlam/Renderer/Renderer.h"
 #include "Quentlam/Renderer/Renderer2D.h"
 #include "Quentlam/Renderer/Renderer3D.h"
+#include "Quentlam/Renderer/SkyRenderer.h"
+#include "Quentlam/Renderer/CubemapTexture.h"
 #include "Quentlam/Renderer/RenderCommand.h"
 
 
@@ -43,4 +45,6 @@
 #include "Quentlam/Renderer/Mesh.h"
 
 #include "Quentlam/Audio/AudioModule.h"
+#include "Quentlam/Modding/LuaScriptBridge.h"
+#include "Quentlam/Modding/LuaScriptInstance.h"
 

@@ -135,7 +135,7 @@ namespace Quentlam
 		s_Data.WhiteTexture->SetData(&whiteTextureData,sizeof(uint32_t));
 		
 		int32_t samplaers[s_Data.MaxTextureSlots];
-		for (int i = 0; i < s_Data.MaxTextureSlots; i++)
+		for (uint32_t i = 0; i < s_Data.MaxTextureSlots; i++)
 			samplaers[i] = i;
 
 		s_Data.TextureShader = Shader::Create("assets/shaders/Texture2DShader.glsl");
@@ -193,21 +193,38 @@ namespace Quentlam
 
 		s_Data.TextureSlotIndex = 1;
 	}
+
+	void Renderer2D::BeginScene(const Camera& camera)
+	{
+		QL_PROFILE_FUNCTION();
+
+		s_Data.TextureShader->Bind();
+		s_Data.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
+
+		s_Data.QuadIndexCount = 0;
+		s_Data.QuadVertexBufferPtr = s_Data.QuadVertexBufferBase;
+
+		s_Data.TriangleIndexCount = 0;
+		s_Data.TriangleVertexBufferPtr = s_Data.TriangleVertexBufferBase;
+
+		s_Data.TextureSlotIndex = 1;
+	}
+
 	void Renderer2D::EndScene()
 	{
 		QL_PROFILE_FUNCTION();
 
-		uint32_t quadDataSize = (uint8_t*)s_Data.QuadVertexBufferPtr - (uint8_t*)s_Data.QuadVertexBufferBase;
+		uint32_t quadDataSize = static_cast<uint32_t>((uint8_t*)s_Data.QuadVertexBufferPtr - (uint8_t*)s_Data.QuadVertexBufferBase);
 		s_Data.QuadVertexBuffer->SetData(s_Data.QuadVertexBufferBase, quadDataSize);
 
-		uint32_t triangleDataSize = (uint8_t*)s_Data.TriangleVertexBufferPtr - (uint8_t*)s_Data.TriangleVertexBufferBase;
+		uint32_t triangleDataSize = static_cast<uint32_t>((uint8_t*)s_Data.TriangleVertexBufferPtr - (uint8_t*)s_Data.TriangleVertexBufferBase);
 		s_Data.TriangleVertexBuffer->SetData(s_Data.TriangleVertexBufferBase, triangleDataSize);
 
 		Flush();
 	}
 	void Renderer2D::Flush()
 	{
-		for (int i = 0; i < s_Data.TextureSlotIndex; i++)
+		for (uint32_t i = 0; i < s_Data.TextureSlotIndex; i++)
 			s_Data.TextureSlots[i]->Bind(i);
 
 		if (s_Data.TriangleIndexCount)
@@ -556,7 +573,7 @@ namespace Quentlam
 		constexpr glm::vec2 textureCoords[] = { { 0.0f,0.0f }, { 1.0f, 0.0f },{ 1.0f,1.0f },{ 0.0f, 1.0f} };
 
 		float textureIndex = 0.0f;
-		for (int i = 1; i < s_Data.TextureSlotIndex; i++)
+		for (uint32_t i = 1; i < s_Data.TextureSlotIndex; i++)
 		{
 			if (*s_Data.TextureSlots[i].get() == *texture.get())
 			{
@@ -632,7 +649,7 @@ namespace Quentlam
 
 
 		float textureIndex = 0.0f;
-		for (int i = 1; i < s_Data.TextureSlotIndex; i++)
+		for (uint32_t i = 1; i < s_Data.TextureSlotIndex; i++)
 		{
 			if (*s_Data.TextureSlots[i].get() == *texture.get())
 			{
@@ -682,6 +699,51 @@ namespace Quentlam
 		DrawQuad(transform, texture, tilingFactor, tintColor, entityID);
 	}
 
+	void Renderer2D::DrawParticle(const glm::mat4& transform, const Particle2D& particle, const Ref<Texture2D>& texture, int entityID)
+	{
+		QL_PROFILE_FUNCTION();
+
+		if (s_Data.QuadIndexCount >= Renderer2DData::MaxIndices || s_Data.TextureSlotIndex >= Renderer2DData::MaxTextureSlots)
+			FlushAndReset();
+
+		constexpr size_t quadVertexCount = 4;
+		constexpr glm::vec2 textureCoords[] = { { 0.0f, 0.0f }, { 1.0f, 0.0f },{ 1.0f, 1.0f },{ 0.0f, 1.0f } };
+
+		float textureIndex = 0.0f;
+		for (uint32_t i = 1; i < s_Data.TextureSlotIndex; i++)
+		{
+			if (*s_Data.TextureSlots[i].get() == *texture.get())
+			{
+				textureIndex = (float)i;
+				break;
+			}
+		}
+
+		if (textureIndex == 0.0f)
+		{
+			textureIndex = (float)s_Data.TextureSlotIndex;
+			s_Data.TextureSlots[s_Data.TextureSlotIndex] = texture;
+			s_Data.TextureSlotIndex++;
+		}
+
+		float lifeRatio = particle.MaxLife > 0.0f ? particle.Life / particle.MaxLife : 1.0f;
+		glm::vec4 color = glm::mix(particle.Color, particle.Color, lifeRatio);
+
+		for (uint32_t i = 0; i < quadVertexCount; i++)
+		{
+			s_Data.QuadVertexBufferPtr->Position = transform * s_Data.QuadVertexPosition[i];
+			s_Data.QuadVertexBufferPtr->Color = color;
+			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
+			s_Data.QuadVertexBufferPtr->TexIndex = textureIndex;
+			s_Data.QuadVertexBufferPtr->TilingFactor = 1.0f;
+			s_Data.QuadVertexBufferPtr->EntityID = entityID;
+			s_Data.QuadVertexBufferPtr++;
+		}
+
+		s_Data.QuadIndexCount += 6;
+		s_Data.Stats.QuadCount++;
+	}
+
 	void Renderer2D::ResetStats()
 	{
 		memset(&s_Data.Stats, 0, sizeof(Statistics));
@@ -690,6 +752,11 @@ namespace Quentlam
 	Renderer2D::Statistics Renderer2D::GetStatistics()
 	{
 		return s_Data.Stats;
+	}
+
+	Ref<Texture2D> Renderer2D::GetWhiteTexture()
+	{
+		return s_Data.WhiteTexture;
 	}
 
 }

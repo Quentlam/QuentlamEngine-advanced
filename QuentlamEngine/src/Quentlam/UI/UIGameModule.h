@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <memory>
 #include <variant>
+#include <entt/entt.hpp>
 
 namespace Quentlam
 {
@@ -265,6 +266,13 @@ namespace Quentlam
 		bool HasScreen(const std::string& screenId) const;
 		std::unordered_map<std::string, Ref<UIScreen>>& GetRegisteredScreens() { return m_RegisteredScreens; }
 
+		// ECS entity <-> UIScreen binding
+		void RegisterScreenForEntity(entt::entity entity, Ref<UIScreen> screen);
+		void UnregisterScreenForEntity(entt::entity entity);
+		Ref<UIScreen> GetScreenForEntity(entt::entity entity) const;
+		entt::entity GetEntityForScreen(const std::string& screenId) const;
+		const std::unordered_map<entt::entity, std::string>& GetEntityScreenMap() const { return m_EntityToScreenId; }
+
 		std::function<void(EUISound)> OnPlaySound;
 
 	private:
@@ -272,6 +280,8 @@ namespace Quentlam
 		ECursorState m_CursorState = ECursorState::Normal;
 		bool m_UIEnabled = true;
 		std::unordered_map<std::string, Ref<UIScreen>> m_RegisteredScreens;
+		std::unordered_map<entt::entity, std::string> m_EntityToScreenId;
+		std::unordered_map<std::string, entt::entity> m_ScreenIdToEntity;
 	};
 
 	inline UIScreen::UIScreen(const std::string& id)
@@ -592,16 +602,7 @@ namespace Quentlam
 		m_CursorState = state;
 	}
 
-	inline void UIGameModule::RegisterScreen(Ref<UIScreen> screen)
-	{
-		if (screen)
-			m_RegisteredScreens[screen->GetId()] = screen;
-	}
-
-	inline void UIGameModule::UnregisterScreen(const std::string& screenId)
-	{
-		m_RegisteredScreens.erase(screenId);
-	}
+	// These are implemented in UIGameModule.cpp for consistency with entity map management
 
 	inline Ref<UIScreen> UIGameModule::GetScreen(const std::string& screenId) const
 	{

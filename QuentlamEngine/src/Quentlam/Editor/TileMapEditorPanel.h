@@ -4,9 +4,19 @@
 #include "Quentlam/Renderer/TileMapRenderer.h"
 #include <glm/glm.hpp>
 #include <string>
+#include <vector>
+#include <stack>
 
 namespace Quentlam
 {
+	enum class ETileMapTool : uint8_t
+	{
+		Brush = 0,
+		Eraser = 1,
+		Fill = 2,
+		Picker = 3
+	};
+
 	class TileMapEditorPanel
 	{
 	public:
@@ -32,10 +42,15 @@ namespace Quentlam
 		void HandleBrushStrokeContinuous(const glm::ivec2& gridPos);
 		void HandleBrushStrokeContinuousReset();
 
+		void SetTool(ETileMapTool tool) { m_CurrentTool = tool; }
+		ETileMapTool GetTool() const { return m_CurrentTool; }
+
 	private:
 		void RenderTilePalette();
 		void RenderBrushSettings();
 		void RenderMapSettings();
+		void RenderToolBar();
+		void FloodFill(const glm::ivec2& pos, ETileType newType);
 
 		TileMap* m_TileMap = nullptr;
 		TileMapRenderer m_Renderer;
@@ -47,6 +62,7 @@ namespace Quentlam
 		float m_EditorTileSize = 1.0f;
 		bool m_LeftMouseDown = false;
 		bool m_RightMouseDown = false;
+		ETileMapTool m_CurrentTool = ETileMapTool::Brush;
 
 		int m_MapWidth = 100;
 		int m_MapHeight = 100;

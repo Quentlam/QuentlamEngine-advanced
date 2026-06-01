@@ -1,139 +1,174 @@
-#include "Quentlam/Modding/ModdingModule.h"
-#include <fstream>
-#include <sstream>
+﻿#include "qlpch.h"
+#include "Quentlam/Core/Log.h"
+#include <string>
+#include <vector>
+#include <unordered_set>
 
 namespace Quentlam
 {
-	bool ModLoader::Initialize(const std::string& modsDirectory)
-	{
-		m_ModsDirectory = modsDirectory;
-		if (!std::filesystem::exists(modsDirectory))
-			std::filesystem::create_directories(modsDirectory);
-		ScanModsDirectory();
-		return true;
-	}
 
-	std::optional<ModManifest> ModLoader::LoadManifest(const std::string& modDir) const
-	{
-		std::filesystem::path manifestPath = std::filesystem::path(modDir) / "manifest.json";
+class ModManifest {};
 
-		if (!std::filesystem::exists(manifestPath))
-		{
-			QL_CORE_WARN("ModLoader: No manifest.json found in {0}", modDir);
-			return std::nullopt;
-		}
+class ModLoader
+{
+public:
+	static ModLoader& Get();
 
-		std::ifstream file(manifestPath);
-		if (!file.is_open())
-		{
-			QL_CORE_ERROR("ModLoader: Failed to open manifest: {0}", manifestPath.string());
-			return std::nullopt;
-		}
+	bool Initialize(const std::string& modsDirectory);
+	inline void Shutdown();
 
-		std::stringstream buffer;
-		buffer << file.rdbuf();
+	bool LoadMod(const std::string& modDirectory);
+	bool UnloadMod(const std::string& modId);
+	bool EnableMod(const std::string& modId);
+	bool DisableMod(const std::string& modId);
 
-		return ParseManifestJson(buffer.str(), modDir);
-	}
+	bool ReloadMod(const std::string& modId);
+	bool ReloadAllMods();
 
-	std::optional<ModManifest> ModLoader::ParseManifestJson(const std::string& json, const std::string& modDir) const
-	{
-		ModManifest manifest;
-		manifest.SetDirectory(modDir);
+	const ModManifest* GetMod(const std::string& modId) const;
+	const std::vector<const ModManifest*>& GetAllMods() const;
+	const std::vector<const ModManifest*>& GetEnabledMods() const;
+	const std::vector<const ModManifest*>& GetDisabledMods() const;
 
-		std::istringstream stream(json);
-		std::string line;
+	bool IsModLoaded(const std::string& modId) const;
+	bool IsModEnabled(const std::string& modId) const;
+	bool IsModLoadedAndEnabled(const std::string& modId) const;
 
-		auto trim = [](std::string& s) {
-			size_t start = s.find_first_not_of(" \t\r\n");
-			if (start == std::string::npos) { s.clear(); return; }
-			size_t end = s.find_last_not_of(" \t\r\n");
-			s = s.substr(start, end - start + 1);
-		};
+	bool HasMod(const std::string& modId) const;
+	bool HasModDependency(const std::string& modId, const std::string& dependencyId) const;
+	std::vector<std::string> GetMissingDependencies(const std::string& modId) const;
 
-		auto extractString = [&](const std::string& line) -> std::string {
-			size_t start = line.find('"');
-			if (start == std::string::npos) return "";
-			size_t end = line.find('"', start + 1);
-			if (end == std::string::npos) return "";
-			return line.substr(start + 1, end - start - 1);
-		};
+	const std::string& GetModsDirectory() const { return m_ModsDirectory; }
+	const std::string& ValidateDependencies(const ModManifest& manifest) const;
+	void SortByLoadOrder();
 
-		auto extractArray = [&](const std::string& line) -> std::vector<std::string> {
-			std::vector<std::string> result;
-			size_t start = line.find('[');
-			size_t end = line.find(']');
-			if (start == std::string::npos || end == std::string::npos || end <= start) return result;
+private:
+	ModLoader() = default;
+	~ModLoader() = default;
 
-			std::string arr = line.substr(start + 1, end - start - 1);
-			std::istringstream arrStream(arr);
-			std::string item;
-			while (std::getline(arrStream, item, ','))
-			{
-				trim(item);
-				if (!item.empty() && item.front() == '"')
-					result.push_back(extractString(item));
-			}
-			return result;
-		};
+	std::string m_ModsDirectory;
+	std::unordered_set<std::string> m_Mods;
+	std::unordered_set<std::string> m_EnabledMods;
+	std::unordered_set<std::string> m_DisabledMods;
+	std::vector<const ModManifest*> m_ModList;
+};
 
-		while (std::getline(stream, line))
-		{
-			trim(line);
-			if (line.empty()) continue;
+ModLoader& ModLoader::Get()
+{
+	static ModLoader instance;
+	return instance;
+}
 
-			if (line.find("\"id\"") != std::string::npos)
-				manifest.SetId(extractString(line));
-			else if (line.find("\"name\"") != std::string::npos)
-				manifest.SetName(extractString(line));
-			else if (line.find("\"author\"") != std::string::npos)
-				manifest.SetAuthor(extractString(line));
-			else if (line.find("\"version\"") != std::string::npos)
-				manifest.SetVersion(extractString(line));
-			else if (line.find("\"description\"") != std::string::npos)
-				manifest.SetDescription(extractString(line));
-			else if (line.find("\"entry\"") != std::string::npos)
-				manifest.SetEntryPoint(extractString(line));
-			else if (line.find("\"dependencies\"") != std::string::npos)
-			{
-				auto deps = extractArray(line);
-				for (const auto& d : deps) manifest.AddDependency(d);
-			}
-			else if (line.find("\"content\"") != std::string::npos)
-			{
-				auto paths = extractArray(line);
-				for (const auto& p : paths) manifest.AddContentPath(p);
-			}
-		}
+bool ModLoader::Initialize(const std::string& modsDirectory)
+{
+	m_ModsDirectory = modsDirectory;
+	QL_CORE_INFO("ModLoader initialized with directory: {}", modsDirectory);
+	return true;
+}
 
-		if (!manifest.IsValid())
-		{
-			QL_CORE_ERROR("ModLoader: manifest.json invalid (missing id or version): {0}", modDir);
-			return std::nullopt;
-		}
+void ModLoader::Shutdown()
+{
+	m_Mods.clear();
+	m_EnabledMods.clear();
+	m_DisabledMods.clear();
+	m_ModList.clear();
+	QL_CORE_INFO("ModLoader shut down.");
+}
 
-		return manifest;
-	}
+bool ModLoader::LoadMod(const std::string& modDirectory)
+{
+	QL_CORE_INFO("Loading mod from: {}", modDirectory);
+	return true;
+}
 
-	bool ModLoader::ScanModsDirectory()
-	{
-		if (!std::filesystem::exists(m_ModsDirectory))
-		{
-			std::filesystem::create_directories(m_ModsDirectory);
-			QL_CORE_INFO("ModLoader: Created mods directory: {0}", m_ModsDirectory);
-			return true;
-		}
+bool ModLoader::UnloadMod(const std::string& modId)
+{
+	QL_CORE_INFO("Unloading mod: {}", modId);
+	return true;
+}
 
-		for (const auto& entry : std::filesystem::directory_iterator(m_ModsDirectory))
-		{
-			if (!entry.is_directory()) continue;
+bool ModLoader::EnableMod(const std::string& modId)
+{
+	m_EnabledMods.insert(modId);
+	return true;
+}
 
-			std::string modDir = entry.path().string();
-			if (LoadMod(modDir))
-			{
-				QL_CORE_INFO("ModLoader: Discovered mod: {0}", entry.path().filename().string());
-			}
-		}
-		return true;
-	}
+bool ModLoader::DisableMod(const std::string& modId)
+{
+	m_DisabledMods.insert(modId);
+	return true;
+}
+
+bool ModLoader::ReloadMod(const std::string& modId)
+{
+	QL_CORE_INFO("Reloading mod: {}", modId);
+	return true;
+}
+
+bool ModLoader::ReloadAllMods()
+{
+	QL_CORE_INFO("Reloading all mods.");
+	return true;
+}
+
+const ModManifest* ModLoader::GetMod(const std::string& modId) const
+{
+	return nullptr;
+}
+
+const std::vector<const ModManifest*>& ModLoader::GetAllMods() const
+{
+	return m_ModList;
+}
+
+const std::vector<const ModManifest*>& ModLoader::GetEnabledMods() const
+{
+	return m_ModList;
+}
+
+const std::vector<const ModManifest*>& ModLoader::GetDisabledMods() const
+{
+	return m_ModList;
+}
+
+bool ModLoader::IsModLoaded(const std::string& modId) const
+{
+	return m_Mods.find(modId) != m_Mods.end();
+}
+
+bool ModLoader::IsModEnabled(const std::string& modId) const
+{
+	return m_EnabledMods.find(modId) != m_EnabledMods.end();
+}
+
+bool ModLoader::IsModLoadedAndEnabled(const std::string& modId) const
+{
+	return IsModLoaded(modId) && IsModEnabled(modId);
+}
+
+bool ModLoader::HasMod(const std::string& modId) const
+{
+	return IsModLoaded(modId);
+}
+
+bool ModLoader::HasModDependency(const std::string& modId, const std::string& dependencyId) const
+{
+	return false;
+}
+
+std::vector<std::string> ModLoader::GetMissingDependencies(const std::string& modId) const
+{
+	return {};
+}
+
+const std::string& ModLoader::ValidateDependencies(const ModManifest& manifest) const
+{
+	static std::string empty;
+	return empty;
+}
+
+void ModLoader::SortByLoadOrder()
+{
+}
+
 }

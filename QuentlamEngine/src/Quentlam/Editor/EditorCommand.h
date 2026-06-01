@@ -74,7 +74,7 @@ namespace Quentlam
 	private:
 		Scene* m_Scene = nullptr;
 		entt::entity m_Entity = entt::null;
-		std::vector<uint8_t> m_SerializedData;
+		std::string m_SerializedData;
 		std::string m_Tag;
 	};
 

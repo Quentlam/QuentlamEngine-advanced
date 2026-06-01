@@ -1,4 +1,4 @@
-#include <windef.h>
+﻿#include <windef.h>
 #include <WinBase.h>
 #include <ShellAPI.h>
 #include <ShlObj.h>
@@ -216,9 +216,13 @@ namespace Quentlam
 	}
 
 	EditorLayer::EditorLayer()
-		:Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_PerspCameraController(35.0f, 1280.0f / 720.0f)
+		:Layer("EditorLayer"), m_CameraController(1280.0f / 720.0f), m_PerspCameraController(35.0f, 1280.0f / 720.0f),
+		m_AnimatorEditorPanel(AnimatorEditorPanel::Get()),
+		m_NavMeshEditorPanel(NavMeshEditorPanel::Get())
 	{
 		m_UIHierarchyPanel.SetUIGameModule(&UIGameModule::Get());
+		m_AnimationEditorPanel.SetScene(m_ActiveScene.get());
+		m_AtlasBuilderPanel.SetScene(m_ActiveScene.get());
 	}
 
 	void EditorLayer::OnScenePlay()
@@ -324,6 +328,17 @@ namespace Quentlam
 		m_ToolbarTransitionProgress = 0.0f;
 	}
 
+	void EditorLayer::OnSceneStep()
+	{
+		if (m_IsSceneTransitioning || m_SceneState == SceneState::Edit)
+			return;
+
+		if (m_SceneState == SceneState::Pause && m_ActiveScene)
+		{
+			m_ActiveScene->OnStepFrame();
+		}
+	}
+
 	void EditorLayer::ResumeScenePlay()
 	{
 		if (m_IsSceneTransitioning || m_SceneState != SceneState::Pause)
@@ -366,6 +381,7 @@ namespace Quentlam
 		m_IconPause = Texture2D::Create("assets/icons/PauseButton.png");
 		m_IconStop = Texture2D::Create("assets/icons/StopButton.png");
 		m_IconAdd = Texture2D::Create("assets/icons/AddButton.png");
+		m_IconStep = Texture2D::Create("assets/icons/StepButton.png");
 
 		m_OutlineShader = Shader::Create("assets/shaders/OutlineShader.glsl");
 		glCreateVertexArrays(1, &m_EmptyVAO);
@@ -376,6 +392,7 @@ namespace Quentlam
 		fbSpec.Height = 720;
 
 		m_Framebuffer = FrameBuffer::Create(fbSpec);
+		m_GameFramebuffer = FrameBuffer::Create(fbSpec);
 
 		m_ActiveScene = CreateRef<Scene>();
 		m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
@@ -639,447 +656,355 @@ namespace Quentlam
 		//Renderer
 		Renderer2D::ResetStats();
 		Renderer3D::ResetStats();
-		m_Framebuffer->Bind();
-		m_Framebuffer->ClearAttachment(1, -1);
-		RenderCommand::SetClearColor(glm::vec4(0.1f, 0.1f, 0.1f, 1.0f));
-		RenderCommand::Clear();
 
-		// Ensure depth test is enabled before rendering the scene
-		RenderCommand::SetDepthTest(true);
+		// Determine which viewport layouts are showing the scene
+		bool showSceneFB = (m_ViewportLayout == ViewportLayout::SceneOnly ||
+			m_ViewportLayout == ViewportLayout::SplitH ||
+			m_ViewportLayout == ViewportLayout::SplitV);
+		bool showGameFB = (m_ViewportLayout == ViewportLayout::GameOnly ||
+			m_ViewportLayout == ViewportLayout::SplitH ||
+			m_ViewportLayout == ViewportLayout::SplitV);
 
-		if (m_Is3DCamera)
+		// ---- Render to Scene FrameBuffer (always for scene editing) ----
+		if (showSceneFB && m_ViewportSize.x > 0 && m_ViewportSize.y > 0)
 		{
-			Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
-			
-			// Draw the default cube
-			if (m_CubeEntity)
-			{
-				auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
-				Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
-			}
+			m_Framebuffer->Bind();
+			m_Framebuffer->ClearAttachment(1, -1);
+			RenderCommand::SetClearColor(glm::vec4(0.1f, 0.1f, 0.1f, 1.0f));
+			RenderCommand::Clear();
+			RenderCommand::SetDepthTest(true);
 
-			auto view = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
-			view.each([](auto entityID, auto& tc, auto& cube)
-			{
-				Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
-			});
-			
-			auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
-			primView.each([](auto entityID, auto& tc, auto& prim)
-			{
-				// Render all primitives as cubes for now until mesh generation is implemented
-				Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
-			});
+			QL_CORE_INFO("  FB bound, clear done, texID={0}", m_Framebuffer->GetColorAttachmentRendererID());
 
-			if (m_ShowPhysicsColliders)
-			{
-				Renderer3D::EndScene(); // Flush filled geometry
-
-				Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
-				glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-				glLineWidth(2.0f);
-
-				auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider3DComponent>();
-				for (auto entity : view)
-				{
-					auto [tc, bc3d] = view.get<TransformComponent, BoxCollider3DComponent>(entity);
-					if (!bc3d.ShowCollider) continue;
-					glm::vec3 scale(
-						glm::length(glm::vec3(tc.Transform[0])),
-						glm::length(glm::vec3(tc.Transform[1])),
-						glm::length(glm::vec3(tc.Transform[2]))
-					);
-					glm::vec3 position = tc.Transform[3];
-					glm::vec3 offset = bc3d.Offset;
-					// Apply the same rotation as the transform component
-					glm::mat4 rotationMatrix = tc.Transform;
-					// Zero out translation
-					rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-					// Normalize columns to remove scale
-					rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
-					rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
-					rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
-
-					glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-						rotationMatrix * 
-						glm::translate(glm::mat4(1.0f), offset) *
-						glm::scale(glm::mat4(1.0f), bc3d.HalfExtent * scale * 2.0f);
-					Renderer3D::DrawCube(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
-				}
-
-				Renderer3D::EndScene(); // Flush lines
-				glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // Restore fill mode
-
-				// Begin scene again for the model
-				Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
-			}
-
-			if (m_Model && m_ModelEntity)
-			{
-				auto& tc = m_ModelEntity.GetComponent<TransformComponent>();
-				Renderer3D::DrawModel(tc.Transform, *m_Model, glm::vec4(1.0f), (int)(uint32_t)m_ModelEntity);
-			}
-			Renderer3D::EndScene();
-			
-			Renderer2D::BeginScene(m_PerspCameraController.GetCamera());
-		}
-		else
-		{
-			Renderer3D::BeginScene(m_CameraController.GetCamera());
-			if (m_CubeEntity)
-			{
-				auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
-				Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
-			}
-			auto view = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
-			view.each([](auto entityID, auto& tc, auto& cube)
-			{
-				Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
-			});
-
-			auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
-			primView.each([](auto entityID, auto& tc, auto& prim)
-			{
-				if (prim.Type == PrimitiveRendererComponent::PrimitiveType::Capsule)
-				{
-					Renderer3D::DrawCapsule(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
-				}
-				else
-				{
-					// Render other primitives as cubes for now until more mesh generation is implemented
-					Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
-				}
-			});
-
-			if (m_ShowPhysicsColliders)
-			{
-				Renderer3D::EndScene(); // Flush filled geometry
-
-				Renderer3D::BeginScene(m_CameraController.GetCamera());
-				glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-				glLineWidth(2.0f);
-
-				auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider3DComponent>();
-				for (auto entity : view)
-				{
-					auto [tc, bc3d] = view.get<TransformComponent, BoxCollider3DComponent>(entity);
-					if (!bc3d.ShowCollider) continue;
-					glm::vec3 scale(
-						glm::length(glm::vec3(tc.Transform[0])),
-						glm::length(glm::vec3(tc.Transform[1])),
-						glm::length(glm::vec3(tc.Transform[2]))
-					);
-					glm::vec3 position = tc.Transform[3];
-					glm::vec3 offset = bc3d.Offset;
-					glm::mat4 rotationMatrix = tc.Transform;
-					rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-					rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
-					rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
-					rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
-
-					glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-						rotationMatrix * 
-						glm::translate(glm::mat4(1.0f), offset) *
-						glm::scale(glm::mat4(1.0f), bc3d.HalfExtent * scale * 2.0f);
-					Renderer3D::DrawCube(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
-				}
-
-				Renderer3D::EndScene(); // Flush lines
-				glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // Restore fill mode
-
-				// Begin scene again for the model
-				Renderer3D::BeginScene(m_CameraController.GetCamera());
-			}
-
-			Renderer3D::EndScene();
-
-			Renderer2D::BeginScene(m_CameraController.GetCamera());
-		}
-
-		//update scene
-		switch (m_SceneState)
-		{
-			case SceneState::Edit:
-			{
-				m_ActiveScene->OnUpdate(ts);
-				break;
-			}
-			case SceneState::Play:
-			{
-				m_ActiveScene->OnUpdateRuntime(ts);
-				break;
-			}
-			case SceneState::Pause:
-			{
-				m_ActiveScene->OnUpdate(ts); // Just render, no physics/script update
-				break;
-			}
-		}
-
-				// Keep the 2D camera logic generic; no game-specific follow target.
-		if (!m_Is3DCamera)
-		{
-			glm::vec3 currentPos = m_CameraController.GetPosition();
-			glm::vec3 targetPos = currentPos;
-
-			if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
-			{
-				glm::vec3 newPos = currentPos + (targetPos - currentPos) * (2.0f * (float)ts);
-				m_CameraController.SetPosition(newPos);
-			}
-		}
-		
-		Renderer2D::EndScene(); // Flush all filled geometry first
-
-		if (m_ShowPhysicsColliders)
-		{
-			// Start a new batch for lines
+			// Camera
 			if (m_Is3DCamera)
-				Renderer2D::BeginScene(m_PerspCameraController.GetCamera());
+				Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
 			else
+				Renderer3D::BeginScene(m_CameraController.GetCamera());
+
+			// ... 3D rendering (same as before) ...
+			if (m_CubeEntity)
+			{
+				auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
+				Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
+			}
+
+			if (m_Is3DCamera)
+			{
+				auto view = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
+				view.each([](auto entityID, auto& tc, auto& cube)
+				{
+					Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
+				});
+
+				auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
+				primView.each([](auto entityID, auto& tc, auto& prim)
+				{
+					Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+				});
+
+				if (m_ShowPhysicsColliders)
+				{
+					Renderer3D::EndScene();
+					Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
+					glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+					glLineWidth(2.0f);
+					auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider3DComponent>();
+					for (auto entity : view)
+					{
+						auto [tc, bc3d] = view.get<TransformComponent, BoxCollider3DComponent>(entity);
+						if (!bc3d.ShowCollider) continue;
+						glm::vec3 scale( glm::length(glm::vec3(tc.Transform[0])), glm::length(glm::vec3(tc.Transform[1])), glm::length(glm::vec3(tc.Transform[2])) );
+						glm::vec3 position = tc.Transform[3];
+						glm::vec3 offset = bc3d.Offset;
+						glm::mat4 rotationMatrix = tc.Transform; rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+						rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
+						rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
+						rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
+						glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) * rotationMatrix * glm::translate(glm::mat4(1.0f), offset) * glm::scale(glm::mat4(1.0f), bc3d.HalfExtent * scale * 2.0f);
+						Renderer3D::DrawCube(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
+					}
+					Renderer3D::EndScene();
+					glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+					Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
+				}
+
+				if (m_Model && m_ModelEntity)
+				{
+					auto& tc = m_ModelEntity.GetComponent<TransformComponent>();
+					Renderer3D::DrawModel(tc.Transform, *m_Model, glm::vec4(1.0f), (int)(uint32_t)m_ModelEntity);
+				}
+				Renderer3D::EndScene();
+				Renderer2D::BeginScene(m_PerspCameraController.GetCamera());
+			}
+			else
+			{
+				Renderer3D::BeginScene(m_CameraController.GetCamera());
+				if (m_CubeEntity)
+				{
+					auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
+					Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
+				}
+				auto view = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
+				view.each([](auto entityID, auto& tc, auto& cube)
+				{
+					Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
+				});
+
+				auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
+				primView.each([](auto entityID, auto& tc, auto& prim)
+				{
+					if (prim.Type == PrimitiveRendererComponent::PrimitiveType::Capsule)
+						Renderer3D::DrawCapsule(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+					else
+						Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+				});
+
+				if (m_ShowPhysicsColliders)
+				{
+					Renderer3D::EndScene();
+					Renderer3D::BeginScene(m_CameraController.GetCamera());
+					glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+					glLineWidth(2.0f);
+					auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider3DComponent>();
+					for (auto entity : view)
+					{
+						auto [tc, bc3d] = view.get<TransformComponent, BoxCollider3DComponent>(entity);
+						if (!bc3d.ShowCollider) continue;
+						glm::vec3 scale( glm::length(glm::vec3(tc.Transform[0])), glm::length(glm::vec3(tc.Transform[1])), glm::length(glm::vec3(tc.Transform[2])) );
+						glm::vec3 position = tc.Transform[3];
+						glm::vec3 offset = bc3d.Offset;
+						glm::mat4 rotationMatrix = tc.Transform; rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+						rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
+						rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
+						rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
+						glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) * rotationMatrix * glm::translate(glm::mat4(1.0f), offset) * glm::scale(glm::mat4(1.0f), bc3d.HalfExtent * scale * 2.0f);
+						Renderer3D::DrawCube(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
+					}
+					Renderer3D::EndScene();
+					glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+					Renderer3D::BeginScene(m_CameraController.GetCamera());
+				}
+				Renderer3D::EndScene();
 				Renderer2D::BeginScene(m_CameraController.GetCamera());
-
-			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-			glLineWidth(2.0f);
-
-			auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider2DComponent>();
-			for (auto entity : view)
-			{
-				auto [tc, bc2d] = view.get<TransformComponent, BoxCollider2DComponent>(entity);
-				if (!bc2d.ShowCollider) continue;
-				
-				glm::vec3 scale(
-					glm::length(glm::vec3(tc.Transform[0])),
-					glm::length(glm::vec3(tc.Transform[1])),
-					glm::length(glm::vec3(tc.Transform[2]))
-				);
-
-				glm::vec3 position = tc.Transform[3];
-				// Z-offset so it renders slightly in front of the sprite
-				position.z += 0.01f;
-
-				glm::vec3 offset = glm::vec3(bc2d.Offset.x, bc2d.Offset.y, 0.0f);
-				
-				glm::mat4 rotationMatrix = tc.Transform;
-				rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-				rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
-				rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
-				rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
-
-				glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-					rotationMatrix *
-					glm::translate(glm::mat4(1.0f), offset) *
-					glm::scale(glm::mat4(1.0f), glm::vec3(bc2d.Size.x * scale.x, bc2d.Size.y * scale.y, 1.0f));
-
-				Renderer2D::DrawQuad(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
 			}
 
-			auto triView = m_ActiveScene->GetRegistry().view<TransformComponent, TriangleCollider2DComponent>();
-			for (auto entity : triView)
+			// Scene update
+			switch (m_SceneState)
 			{
-				auto [tc, tc2d] = triView.get<TransformComponent, TriangleCollider2DComponent>(entity);
-				if (!tc2d.ShowCollider) continue;
-				
-				glm::vec3 scale(
-					glm::length(glm::vec3(tc.Transform[0])),
-					glm::length(glm::vec3(tc.Transform[1])),
-					glm::length(glm::vec3(tc.Transform[2]))
-				);
-
-				glm::vec3 position = tc.Transform[3];
-				position.z += 0.01f;
-
-				glm::vec3 offset = glm::vec3(tc2d.Offset.x, tc2d.Offset.y, 0.0f);
-				
-				glm::mat4 rotationMatrix = tc.Transform;
-				rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-				rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
-				rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
-				rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
-
-				glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) *
-					rotationMatrix *
-					glm::translate(glm::mat4(1.0f), offset) *
-					glm::scale(glm::mat4(1.0f), glm::vec3(tc2d.Size.x * scale.x, tc2d.Size.y * scale.y, 1.0f));
-
-				Renderer2D::DrawTriangle(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
+				case SceneState::Edit:
+				case SceneState::Play:
+				case SceneState::Pause:
+				case SceneState::Step:
+				{
+					if (m_SceneState == SceneState::Edit || m_SceneState == SceneState::Pause || m_SceneState == SceneState::Step)
+						m_ActiveScene->OnUpdate(ts);
+					else
+						m_ActiveScene->OnUpdateRuntime(ts);
+					break;
+				}
 			}
 
-			Renderer2D::EndScene(); // Flush lines
-			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL); // Restore fill mode
-		}
-
-		
-		// Outline Rendering (Post-Process via Sobel Edge Detection on EntityID)
-		if (m_SelectedEntity)
-		{
-			bool hasSprite = m_SelectedEntity.HasComponent<SpriteTransformComponent>();
-			bool hasTri = m_SelectedEntity.HasComponent<TriangleRendererComponent>();
-			bool isCube = (m_SelectedEntity == m_CubeEntity);
-			bool isModel = (m_SelectedEntity == m_ModelEntity);
-
-			if (hasSprite || hasTri || isCube || isModel)
+			if (!m_Is3DCamera)
 			{
-				// 1. Disable Depth Test to draw over everything
-				RenderCommand::SetDepthTest(false);
-				
-				// 2. Disable writing to EntityID attachment (we only want to draw into Color attachment 0)
-				GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
-				glDrawBuffers(1, drawBuffers);
-				
-				// 3. Enable blending so outline overlays the scene
-				glEnable(GL_BLEND);
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-				
-				// 4. Bind Shader and set uniforms
-				m_OutlineShader->Bind();
-			uint32_t width = m_Framebuffer->GetSpecification().Width;
-			uint32_t height = m_Framebuffer->GetSpecification().Height;
-			m_OutlineShader->SetFloat2("u_TexSize", glm::vec2(1.0f / width, 1.0f / height));
-			m_OutlineShader->SetInt("u_SelectedEntity", (int)(uint32_t)m_SelectedEntity);
-			m_OutlineShader->SetFloat4("u_OutlineColor", m_OutlineColor);
-			m_OutlineShader->SetInt("u_OutlineWidth", m_OutlineWidth);
-			m_OutlineShader->SetFloat("u_OutlineIntensity", m_OutlineIntensity); // 3 pixels outline width
-				
-				// 5. Bind EntityID texture to unit 1 and tell shader to use it
-				glActiveTexture(GL_TEXTURE1);
-				glBindTexture(GL_TEXTURE_2D, m_Framebuffer->GetColorAttachmentRendererID(1));
-				m_OutlineShader->SetInt("u_EntityIDTexture", 1);
-				
-				// 6. Draw fullscreen quad (triangle)
-				glBindVertexArray(m_EmptyVAO);
-				glDrawArrays(GL_TRIANGLES, 0, 3);
-				glBindVertexArray(0);
-				
-				// 7. Restore states
-				GLenum allBuffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-				glDrawBuffers(2, allBuffers); // Restore writing to both color attachments
-				
-				glDisable(GL_BLEND);
-				RenderCommand::SetDepthTest(true);
+				glm::vec3 currentPos = m_CameraController.GetPosition();
+				glm::vec3 targetPos = currentPos;
+				if (m_SceneState == SceneState::Play || m_SceneState == SceneState::Pause)
+				{
+					glm::vec3 newPos = currentPos + (targetPos - currentPos) * (2.0f * (float)ts);
+					m_CameraController.SetPosition(newPos);
+				}
 			}
-		}
-		
-		auto[mx, my] = ImGui::GetMousePos();
-		mx -= m_ViewportBounds[0].x;
-		my -= m_ViewportBounds[0].y;
-		glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
-		my = viewportSize.y - my;
-		int mouseX = (int)mx;
-		int mouseY = (int)my;
 
-		if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
-		{
-			int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
-			// Check if pixelData is valid and is a valid entity ID
-			if (pixelData != -1 && m_ActiveScene->GetRegistry().valid((entt::entity)pixelData))
+			Renderer2D::EndScene();
+
+			// Physics collider lines
+			if (m_ShowPhysicsColliders)
 			{
-				m_HoveredEntity = Entity((entt::entity)pixelData, m_ActiveScene.get());
+				if (m_Is3DCamera)
+					Renderer2D::BeginScene(m_PerspCameraController.GetCamera());
+				else
+					Renderer2D::BeginScene(m_CameraController.GetCamera());
+
+				glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+				glLineWidth(2.0f);
+
+				auto view = m_ActiveScene->GetRegistry().view<TransformComponent, BoxCollider2DComponent>();
+				for (auto entity : view)
+				{
+					auto [tc, bc2d] = view.get<TransformComponent, BoxCollider2DComponent>(entity);
+					if (!bc2d.ShowCollider) continue;
+					glm::vec3 scale( glm::length(glm::vec3(tc.Transform[0])), glm::length(glm::vec3(tc.Transform[1])), glm::length(glm::vec3(tc.Transform[2])) );
+					glm::vec3 position = tc.Transform[3]; position.z += 0.01f;
+					glm::vec3 offset = glm::vec3(bc2d.Offset.x, bc2d.Offset.y, 0.0f);
+					glm::mat4 rotationMatrix = tc.Transform; rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+					rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
+					rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
+					rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
+					glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) * rotationMatrix * glm::translate(glm::mat4(1.0f), offset) * glm::scale(glm::mat4(1.0f), glm::vec3(bc2d.Size.x * scale.x, bc2d.Size.y * scale.y, 1.0f));
+					Renderer2D::DrawQuad(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
+				}
+
+				auto triView = m_ActiveScene->GetRegistry().view<TransformComponent, TriangleCollider2DComponent>();
+				for (auto entity : triView)
+				{
+					auto [tc, tc2d] = triView.get<TransformComponent, TriangleCollider2DComponent>(entity);
+					if (!tc2d.ShowCollider) continue;
+					glm::vec3 scale( glm::length(glm::vec3(tc.Transform[0])), glm::length(glm::vec3(tc.Transform[1])), glm::length(glm::vec3(tc.Transform[2])) );
+					glm::vec3 position = tc.Transform[3]; position.z += 0.01f;
+					glm::vec3 offset = glm::vec3(tc2d.Offset.x, tc2d.Offset.y, 0.0f);
+					glm::mat4 rotationMatrix = tc.Transform; rotationMatrix[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+					rotationMatrix[0] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[0])), 0.0f);
+					rotationMatrix[1] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[1])), 0.0f);
+					rotationMatrix[2] = glm::vec4(glm::normalize(glm::vec3(rotationMatrix[2])), 0.0f);
+					glm::mat4 transform = glm::translate(glm::mat4(1.0f), position) * rotationMatrix * glm::translate(glm::mat4(1.0f), offset) * glm::scale(glm::mat4(1.0f), glm::vec3(tc2d.Size.x * scale.x, tc2d.Size.y * scale.y, 1.0f));
+					Renderer2D::DrawTriangle(transform, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), (int)(uint32_t)entity);
+				}
+
+				Renderer2D::EndScene();
+				glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+			}
+
+			// Outline rendering
+			if (m_SelectedEntity)
+			{
+				bool hasSprite = m_SelectedEntity.HasComponent<SpriteTransformComponent>();
+				bool hasTri = m_SelectedEntity.HasComponent<TriangleRendererComponent>();
+				bool isCube = (m_SelectedEntity == m_CubeEntity);
+				bool isModel = (m_SelectedEntity == m_ModelEntity);
+
+				if (hasSprite || hasTri || isCube || isModel)
+				{
+					RenderCommand::SetDepthTest(false);
+					GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
+					glDrawBuffers(1, drawBuffers);
+					glEnable(GL_BLEND);
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+					m_OutlineShader->Bind();
+					uint32_t width = m_Framebuffer->GetSpecification().Width;
+					uint32_t height = m_Framebuffer->GetSpecification().Height;
+					m_OutlineShader->SetFloat2("u_TexSize", glm::vec2(1.0f / width, 1.0f / height));
+					m_OutlineShader->SetInt("u_SelectedEntity", (int)(uint32_t)m_SelectedEntity);
+					m_OutlineShader->SetFloat4("u_OutlineColor", m_OutlineColor);
+					m_OutlineShader->SetInt("u_OutlineWidth", m_OutlineWidth);
+					m_OutlineShader->SetFloat("u_OutlineIntensity", m_OutlineIntensity);
+					glActiveTexture(GL_TEXTURE1);
+					glBindTexture(GL_TEXTURE_2D, m_Framebuffer->GetColorAttachmentRendererID(1));
+					m_OutlineShader->SetInt("u_EntityIDTexture", 1);
+					glBindVertexArray(m_EmptyVAO);
+					glDrawArrays(GL_TRIANGLES, 0, 3);
+					glBindVertexArray(0);
+					GLenum allBuffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+					glDrawBuffers(2, allBuffers);
+					glDisable(GL_BLEND);
+					RenderCommand::SetDepthTest(true);
+				}
+			}
+
+			// Mouse picking
+			auto[mx, my] = ImGui::GetMousePos();
+			mx -= m_ViewportBounds[0].x;
+			my -= m_ViewportBounds[0].y;
+			glm::vec2 viewportSize = m_ViewportBounds[1] - m_ViewportBounds[0];
+			my = viewportSize.y - my;
+			int mouseX = (int)mx;
+			int mouseY = (int)my;
+
+			if (mouseX >= 0 && mouseY >= 0 && mouseX < (int)viewportSize.x && mouseY < (int)viewportSize.y)
+			{
+				int pixelData = m_Framebuffer->ReadPixel(1, mouseX, mouseY);
+				if (pixelData != -1 && m_ActiveScene->GetRegistry().valid((entt::entity)pixelData))
+					m_HoveredEntity = Entity((entt::entity)pixelData, m_ActiveScene.get());
+				else
+					m_HoveredEntity = Entity();
 			}
 			else
 			{
 				m_HoveredEntity = Entity();
 			}
-		}
-		else
-		{
-			m_HoveredEntity = Entity();
+
+			m_Framebuffer->UnBind();
 		}
 
-		m_Framebuffer->UnBind();
-
-	}
-
-	void EditorLayer::UI_Toolbar()
-	{
-		const ImGuiViewport* viewport = ImGui::GetMainViewport();
-		if (!viewport)
-			return;
-
-		const float uiScale = ImGui::GetIO().FontGlobalScale > 0.0f ? ImGui::GetIO().FontGlobalScale : 1.0f;
-		const auto layout = EditorToolbarLayout::Calculate(2, viewport->WorkSize.x, viewport->WorkPos.y, uiScale, viewport->DpiScale);
-
-		ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + layout.WindowX, layout.WindowY), ImGuiCond_Always);
-		ImGui::SetNextWindowSize(ImVec2(layout.WindowWidth, layout.WindowHeight), ImGuiCond_Always);
-		ImGui::SetNextWindowViewport(viewport->ID);
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0, 0, 0, 0));
-
-		ImGui::Begin("##Toolbar", nullptr,
-			ImGuiWindowFlags_NoDecoration
-			| ImGuiWindowFlags_NoScrollbar
-			| ImGuiWindowFlags_NoScrollWithMouse
-			| ImGuiWindowFlags_NoDocking
-			| ImGuiWindowFlags_NoMove
-			| ImGuiWindowFlags_NoSavedSettings
-			| ImGuiWindowFlags_NoNavFocus
-			| ImGuiWindowFlags_NoNavInputs);
-
-		const bool isPlaying = m_SceneState == SceneState::Play;
-		const bool isPaused = m_SceneState == SceneState::Pause;
-		ImVec2 buttonSize(layout.ButtonSize, layout.ButtonSize);
-		const ImVec2 toolbarPos = ImGui::GetWindowPos();
-		const ImVec2 toolbarSize = ImGui::GetWindowSize();
-		DrawToolbarGroupBackground(toolbarPos, ImVec2(toolbarPos.x + toolbarSize.x, toolbarPos.y + toolbarSize.y), layout.CornerRounding);
-
-		if (m_SceneState != m_LastToolbarVisualState)
+		// ---- Render to Game FrameBuffer (for game view in play mode) ----
+		if (showGameFB && m_GameViewportSize.x > 0 && m_GameViewportSize.y > 0 && m_SceneState == SceneState::Play)
 		{
-			m_LastToolbarVisualState = m_SceneState;
-			m_ToolbarTransitionProgress = 0.0f;
-		}
-		m_ToolbarTransitionProgress = glm::min(m_ToolbarTransitionProgress + (ImGui::GetIO().DeltaTime / kToolbarTransitionDurationSeconds), 1.0f);
-		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 0.65f + (0.35f * m_ToolbarTransitionProgress));
-		ImGui::SetCursorPos(ImVec2(layout.ButtonX, layout.ButtonY));
+			m_GameFramebuffer->Bind();
+			m_GameFramebuffer->ClearAttachment(1, -1);
+			RenderCommand::SetClearColor(glm::vec4(0.05f, 0.05f, 0.05f, 1.0f));
+			RenderCommand::Clear();
+			RenderCommand::SetDepthTest(true);
 
-		const char* buttonId = "PlayScenePrimary";
-		const char* fallbackLabel = "播放";
-		const Ref<Texture2D>* icon = &m_IconPlay;
-		const char* tooltip = "播放场景";
+			if (m_Is3DCamera)
+			{
+				Renderer3D::BeginScene(m_PerspCameraController.GetCamera());
 
-		if (isPlaying)
-		{
-			buttonId = "StopScenePrimary";
-			fallbackLabel = "停止";
-			icon = &m_IconStop;
-			tooltip = "停止场景";
-		}
-		else if (isPaused)
-		{
-			buttonId = "ResumeScenePrimary";
-			fallbackLabel = "播放";
-			icon = &m_IconPlay;
-			tooltip = "继续播放";
-		}
+				if (m_CubeEntity)
+				{
+					auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
+					Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
+				}
 
-		if (DrawToolbarActionButton(buttonId, fallbackLabel, *icon, buttonSize, layout.IconInset, isPlaying))
-		{
-			if (isPlaying)
-				OnSceneStop();
-			else if (isPaused)
-				ResumeScenePlay();
+				auto cubeView = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
+				cubeView.each([](auto entityID, auto& tc, auto& cube)
+				{
+					Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
+				});
+
+				auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
+				primView.each([](auto entityID, auto& tc, auto& prim)
+				{
+					if (prim.Type == PrimitiveRendererComponent::PrimitiveType::Capsule)
+						Renderer3D::DrawCapsule(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+					else
+						Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+				});
+
+				if (m_Model && m_ModelEntity)
+				{
+					auto& tc = m_ModelEntity.GetComponent<TransformComponent>();
+					Renderer3D::DrawModel(tc.Transform, *m_Model, glm::vec4(1.0f), (int)(uint32_t)m_ModelEntity);
+				}
+
+				Renderer3D::EndScene();
+				Renderer2D::BeginScene(m_PerspCameraController.GetCamera());
+			}
 			else
-				OnScenePlay();
-		}
-		if (ImGui::IsItemHovered())
-		{
-			if (!m_LastPlayFailure.empty() && !isPlaying && !isPaused)
-				ImGui::SetTooltip("播放失败: %s", m_LastPlayFailure.c_str());
-			else
-				ImGui::SetTooltip("%s", tooltip);
-		}
+			{
+				Renderer3D::BeginScene(m_CameraController.GetCamera());
 
-		ImGui::SameLine(0, std::round(8.0f * uiScale * viewport->DpiScale));
-		
-		if (ImGui::IsItemHovered())
-		{
-			ImGui::SetTooltip("重置场景到初始状态");
-		}
+				if (m_CubeEntity)
+				{
+					auto& tc = m_CubeEntity.GetComponent<TransformComponent>();
+					Renderer3D::DrawCube(tc.Transform, { 0.8f, 0.2f, 0.3f, 1.0f }, (int)(uint32_t)m_CubeEntity);
+				}
 
-		ImGui::PopStyleVar();
-		ImGui::End();
-		ImGui::PopStyleColor();
-		ImGui::PopStyleVar(2);
+				auto cubeView = m_ActiveScene->GetRegistry().view<TransformComponent, CubeRendererComponent>();
+				cubeView.each([](auto entityID, auto& tc, auto& cube)
+				{
+					Renderer3D::DrawCube(tc.Transform, cube.Color, (int)(uint32_t)entityID, cube.AmbientStrength, cube.DiffuseStrength, cube.SpecularStrength, cube.Shininess);
+				});
+
+				auto primView = m_ActiveScene->GetRegistry().view<TransformComponent, PrimitiveRendererComponent>();
+				primView.each([](auto entityID, auto& tc, auto& prim)
+				{
+					if (prim.Type == PrimitiveRendererComponent::PrimitiveType::Capsule)
+						Renderer3D::DrawCapsule(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+					else
+						Renderer3D::DrawCube(tc.Transform, prim.Color, (int)(uint32_t)entityID, prim.AmbientStrength, prim.DiffuseStrength, prim.SpecularStrength, prim.Shininess);
+				});
+
+				Renderer3D::EndScene();
+				Renderer2D::BeginScene(m_CameraController.GetCamera());
+			}
+
+			// Runtime update happens in the Scene FB block above (only once)
+			// Render 2D scene content
+			m_ActiveScene->OnRender2DOnly(ts);
+
+			Renderer2D::EndScene();
+			m_GameFramebuffer->UnBind();
+		}
 	}
 
 	void EditorLayer::OnImGuiLayer()
@@ -1136,8 +1061,8 @@ namespace Quentlam
 
 		if (ImGui::BeginMenuBar())
 		{
-		if (ImGui::BeginMenu("文件"))
-		{
+			if (ImGui::BeginMenu("文件"))
+			{
 			if (ImGui::MenuItem("新建场景", "Ctrl+N"))
 			{
 				if (m_SceneState == SceneState::Edit)
@@ -1225,18 +1150,68 @@ namespace Quentlam
 			ImGui::EndMenu();
 		}
 
-		if (ImGui::BeginMenu("窗口"))
-		{
-			ImGui::MenuItem("内容浏览器", NULL, &m_IsContentBrowserOpen);
-			ImGui::MenuItem("UI 层级面板", NULL, &m_ShowUIHierarchy);
-			ImGui::MenuItem("UI 画布编辑器", NULL, &m_ShowUICanvasEditor);
-			ImGui::MenuItem("瓦片地图编辑器", NULL, &m_ShowTileMapEditor);
-			ImGui::MenuItem("材质编辑器", NULL, &m_ShowMaterialEditor);
-			ImGui::MenuItem("显示物理碰撞箱", NULL, &m_ShowPhysicsColliders);
+			if (ImGui::BeginMenu("窗口"))
+			{
+			// ---- 场景视图 ----
+			if (ImGui::BeginMenu("场景视图"))
+			{
+				ImGui::MenuItem("场景层级 (Hierarchy)", NULL, &m_ShowUIHierarchy);
+				ImGui::MenuItem("属性 (Inspector)", NULL, nullptr, false);
+				ImGui::EndMenu();
+			}
+
+			// ---- 浏览器 ----
+			if (ImGui::BeginMenu("浏览器"))
+			{
+				ImGui::MenuItem("内容浏览器", NULL, &m_IsContentBrowserOpen);
+				ImGui::MenuItem("资源浏览器", NULL, &m_ShowAssetBrowser);
+				ImGui::EndMenu();
+			}
+
+			// ---- 编辑工具 ----
+			if (ImGui::BeginMenu("编辑工具"))
+			{
+				ImGui::MenuItem("材质编辑器", NULL, &m_ShowMaterialEditor);
+				ImGui::MenuItem("UI 画布编辑器", NULL, &m_ShowUICanvasEditor);
+				ImGui::EndMenu();
+			}
+
+			// ---- 动画 ----
+			if (ImGui::BeginMenu("动画"))
+			{
+				ImGui::MenuItem("动画编辑器", NULL, &m_ShowAnimationEditor);
+				if (ImGui::MenuItem("动画状态机", NULL, m_AnimatorEditorPanel.IsOpen()))
+					m_AnimatorEditorPanel.Toggle();
+				ImGui::EndMenu();
+			}
+
+			// ---- 地图编辑 ----
+			if (ImGui::BeginMenu("地图编辑"))
+			{
+				ImGui::MenuItem("瓦片地图编辑器", NULL, &m_ShowTileMapEditor);
+				if (ImGui::MenuItem("导航网格编辑器", NULL, m_NavMeshEditorPanel.IsOpen()))
+					m_NavMeshEditorPanel.Toggle();
+				ImGui::Separator();
+				ImGui::MenuItem("图集构建器", NULL, &m_ShowAtlasBuilder);
+				ImGui::EndMenu();
+			}
+
+			// ---- 调试 ----
+			if (ImGui::BeginMenu("调试"))
+			{
+				ImGui::MenuItem("控制台", NULL, &m_ShowConsole);
+				ImGui::MenuItem("性能分析器", NULL, &m_ShowProfiler);
+				ImGui::Separator();
+				ImGui::MenuItem("显示物理碰撞箱", NULL, &m_ShowPhysicsColliders);
+				ImGui::EndMenu();
+			}
+
+			ImGui::Separator();
+			ImGui::MenuItem("重置所有面板布局", NULL, nullptr);
 			ImGui::EndMenu();
 		}
 
-		if (ImGui::BeginMenu("游戏对象"))
+			if (ImGui::BeginMenu("游戏对象"))
 		{
 			if (ImGui::BeginMenu("3D 对象"))
 			{
@@ -1337,7 +1312,7 @@ namespace Quentlam
 			ImGui::EndMenu();
 		}
 
-		if (ImGui::BeginMenu("组件 (Component)"))
+			if (ImGui::BeginMenu("组件 (Component)"))
 		{
 			if (m_SelectedEntity)
 			{
@@ -1352,11 +1327,52 @@ namespace Quentlam
 			ImGui::EndMenu();
 		}
 
-		ImGui::EndMenuBar();
+		// ---- 游戏控制 ----
+		if (ImGui::BeginMenu("游戏"))
+		{
+			ImGui::Text("视图布局");
+			ImGui::Separator();
+			const char* layoutNames[] = { "仅场景视图", "仅游戏视图", "水平分屏", "垂直分屏" };
+			for (int i = 0; i < 4; i++)
+			{
+				bool selected = (int)m_ViewportLayout == i;
+				if (ImGui::MenuItem(layoutNames[i], nullptr, selected))
+					m_ViewportLayout = (ViewportLayout)i;
+			}
+
+			ImGui::Separator();
+			ImGui::Text("播放控制");
+			ImGui::Separator();
+			const bool isPlaying = m_SceneState == SceneState::Play;
+			const bool isPaused = m_SceneState == SceneState::Pause;
+
+			if (ImGui::MenuItem(isPlaying ? "停止" : "播放", "F5", isPlaying))
+			{
+				if (isPlaying) OnSceneStop();
+				else OnScenePlay();
+			}
+			if (isPlaying || isPaused)
+			{
+				if (ImGui::MenuItem("暂停", "F6", isPaused))
+					OnScenePause();
+				if (ImGui::MenuItem("逐帧前进", "F10"))
+					OnSceneStep();
+			}
+			if (isPaused)
+			{
+				if (ImGui::MenuItem("继续", "F6", false))
+					ResumeScenePlay();
+			}
+
+			ImGui::Separator();
+			if (ImGui::MenuItem("显示物理碰撞箱", nullptr, m_ShowPhysicsColliders))
+				m_ShowPhysicsColliders = !m_ShowPhysicsColliders;
+
+			ImGui::EndMenu();
 		}
 
-		UI_Toolbar();
-
+		ImGui::EndMenuBar();
+	}
 
 		// Scene Hierarchy Panel
 		ImGui::Begin("场景层级");
@@ -1964,34 +1980,131 @@ namespace Quentlam
 
 
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-		ImGui::Begin("视口 (Viewport)");
 
-
-		auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
-		auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
-		auto viewportOffset = ImGui::GetWindowPos();
-		m_ViewportBounds[0] = { viewportMinRegion.x + viewportOffset.x, viewportMinRegion.y + viewportOffset.y };
-		m_ViewportBounds[1] = { viewportMaxRegion.x + viewportOffset.x, viewportMaxRegion.y + viewportOffset.y };
-
-		m_ViewportFocused = ImGui::IsWindowFocused();
-		m_ViewportHovered = ImGui::IsWindowHovered();
-		Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused || !m_ViewportHovered);//当视口窗口被选中时，阻止事件传递到其他层
-
-
-
-		ImVec2 viewportPanelSize = ImGui::GetContentRegionAvail();
-		if (m_ViewportSize != *((glm::vec2*)&viewportPanelSize) && viewportPanelSize.x > 0.0f && viewportPanelSize.y > 0.0f)
+		// All layouts are rendered INSIDE the single "视口" window
+		if (ImGui::Begin("视口 (Viewport)"))
 		{
-			m_ViewportSize = { viewportPanelSize.x, viewportPanelSize.y };
-			m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
-			m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-			m_PerspCameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
-			m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+			auto viewportMinRegion = ImGui::GetWindowContentRegionMin();
+			auto viewportMaxRegion = ImGui::GetWindowContentRegionMax();
+			auto viewportOffset = ImGui::GetWindowPos();
+			m_ViewportBounds[0] = { viewportMinRegion.x + viewportOffset.x, viewportMinRegion.y + viewportOffset.y };
+			m_ViewportBounds[1] = { viewportMaxRegion.x + viewportOffset.x, viewportMaxRegion.y + viewportOffset.y };
+
+			m_ViewportFocused = ImGui::IsWindowFocused();
+			m_ViewportHovered = ImGui::IsWindowHovered();
+			Application::Get().GetImGuiLayer()->BlockEvents(!m_ViewportFocused || !m_ViewportHovered);
+
+			ImVec2 avail = ImGui::GetContentRegionAvail();
+			float totalW = avail.x;
+			float totalH = avail.y;
+			if (totalW <= 0) totalW = 800.0f;
+			if (totalH <= 0) totalH = 600.0f;
+
+			if (m_ViewportLayout == ViewportLayout::SceneOnly)
+			{
+				// ---- Single Scene View ----
+				m_ViewportSize = { totalW, totalH };
+				if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0)
+				{
+					m_Framebuffer->Resize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+					m_CameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+					m_PerspCameraController.OnResize(m_ViewportSize.x, m_ViewportSize.y);
+					m_ActiveScene->OnViewportResize((uint32_t)m_ViewportSize.x, (uint32_t)m_ViewportSize.y);
+				}
+				uint32_t texID = m_Framebuffer->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)texID, ImVec2{ m_ViewportSize.x, m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+				QL_CORE_INFO("Scene (single): texID={0}, size={1}x{2}", texID, m_ViewportSize.x, m_ViewportSize.y);
+				HandleViewportDragDrop(m_ViewportSize);
+				HandleViewportMousePick(true);
+			}
+			else if (m_ViewportLayout == ViewportLayout::GameOnly)
+			{
+				// ---- Single Game View ----
+				m_GameViewportSize = { totalW, totalH };
+				uint32_t gameTexID = m_GameFramebuffer->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)gameTexID, ImVec2{ m_GameViewportSize.x, m_GameViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+				QL_CORE_INFO("Game (single): texID={0}, size={1}x{2}", gameTexID, m_GameViewportSize.x, m_GameViewportSize.y);
+			}
+			else if (m_ViewportLayout == ViewportLayout::SplitH)
+			{
+				// ---- Horizontal Split: Scene (left) | Game (right) ----
+				ImVec2 avail = ImGui::GetContentRegionAvail();
+				float sceneW = avail.x * m_SplitRatio;
+				float sceneH = avail.y;
+				float gameW = avail.x * (1.0f - m_SplitRatio);
+
+				if (sceneW <= 0) sceneW = 400.0f;
+				if (sceneH <= 0) sceneH = 300.0f;
+				if (gameW <= 0) gameW = 400.0f;
+
+				m_ViewportSize = { sceneW, sceneH };
+				m_GameViewportSize = { gameW, sceneH };
+
+				// Scene View (left)
+				if (m_Framebuffer->GetSpecification().Width != (uint32_t)sceneW || m_Framebuffer->GetSpecification().Height != (uint32_t)sceneH)
+				{
+					m_Framebuffer->Resize((uint32_t)sceneW, (uint32_t)sceneH);
+					m_CameraController.OnResize(sceneW, sceneH);
+					m_PerspCameraController.OnResize(sceneW, sceneH);
+					m_ActiveScene->OnViewportResize((uint32_t)sceneW, (uint32_t)sceneH);
+				}
+				uint32_t texID = m_Framebuffer->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)texID, ImVec2{ sceneW, sceneH }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+				ImGui::SameLine();
+
+				// Game View (right)
+				// In Edit mode: show scene FB. In Play mode: show game FB (rendered separately).
+				Ref<FrameBuffer> gameFB = m_SceneState == SceneState::Play ? m_GameFramebuffer : m_Framebuffer;
+				if (gameFB->GetSpecification().Width != (uint32_t)gameW || gameFB->GetSpecification().Height != (uint32_t)sceneH)
+					gameFB->Resize((uint32_t)gameW, (uint32_t)sceneH);
+				uint32_t gameTexID = gameFB->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)gameTexID, ImVec2{ gameW, sceneH }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+				QL_CORE_INFO("SplitH: Scene texID={0} {1}x{2}, Game texID={3} {4}x{5}", texID, sceneW, sceneH, gameTexID, gameW, sceneH);
+			}
+			else if (m_ViewportLayout == ViewportLayout::SplitV)
+			{
+				// ---- Vertical Split: Scene (top) | Game (bottom) ----
+				ImVec2 avail = ImGui::GetContentRegionAvail();
+				float sceneW = avail.x;
+				float sceneH = avail.y * m_SplitRatio;
+				float gameH = avail.y * (1.0f - m_SplitRatio);
+
+				if (sceneW <= 0) sceneW = 800.0f;
+				if (sceneH <= 0) sceneH = 300.0f;
+				if (gameH <= 0) gameH = 300.0f;
+
+				m_ViewportSize = { sceneW, sceneH };
+				m_GameViewportSize = { sceneW, gameH };
+
+				// Scene View (top)
+				if (m_Framebuffer->GetSpecification().Width != (uint32_t)sceneW || m_Framebuffer->GetSpecification().Height != (uint32_t)sceneH)
+				{
+					m_Framebuffer->Resize((uint32_t)sceneW, (uint32_t)sceneH);
+					m_CameraController.OnResize(sceneW, sceneH);
+					m_PerspCameraController.OnResize(sceneW, sceneH);
+					m_ActiveScene->OnViewportResize((uint32_t)sceneW, (uint32_t)sceneH);
+				}
+				uint32_t texID = m_Framebuffer->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)texID, ImVec2{ sceneW, sceneH }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+
+				// Game View (bottom)
+				// In Edit mode: show scene FB. In Play mode: show game FB (rendered separately).
+				Ref<FrameBuffer> gameFB = m_SceneState == SceneState::Play ? m_GameFramebuffer : m_Framebuffer;
+				if (gameFB->GetSpecification().Width != (uint32_t)sceneW || gameFB->GetSpecification().Height != (uint32_t)gameH)
+					gameFB->Resize((uint32_t)sceneW, (uint32_t)gameH);
+				uint32_t gameTexID = gameFB->GetColorAttachmentRendererID();
+				ImGui::Image((void*)(intptr_t)gameTexID, ImVec2{ sceneW, gameH }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+				QL_CORE_INFO("SplitV: Scene texID={0} {1}x{2}, Game texID={3} {4}x{5}", texID, sceneW, sceneH, gameTexID, sceneW, gameH);
+			}
 		}
+		ImGui::End(); // End "视口 (Viewport)"
 
-		uint32_t textureID = m_Framebuffer->GetColorAttachmentRendererID();
-		ImGui::Image((void*)(intptr_t)textureID, ImVec2{ m_ViewportSize.x,m_ViewportSize.y }, ImVec2{ 0, 1 }, ImVec2{ 1, 0 });
+		ImGui::PopStyleVar();
 
+		// ---- Post-Viewport Render (scene-view dependent) ----
+
+		// Drag & drop into Scene View
 		if (ImGui::BeginDragDropTarget())
 		{
 			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
@@ -2021,53 +2134,10 @@ namespace Quentlam
 		}
 
 		// Mouse picking check
-		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver())
-		{
-			if (m_HoveredEntity)
-			{
-				m_SelectedEntity = m_HoveredEntity;
-			}
-			else
-			{
-				m_SelectedEntity = {};
-			}
-		}
+		HandleViewportMousePick(true);
 
-		// TileMap brush painting: left click/drag in viewport paints tiles
-		if (m_ShowTileMapEditor && ImGui::IsWindowHovered() && !ImGuizmo::IsOver() && !ImGui::IsAnyItemActive())
-		{
-			bool clicked = ImGui::IsMouseClicked(0);
-			bool released = ImGui::IsMouseReleased(0);
-			bool dragging = ImGui::IsMouseDown(0);
-
-			if (released)
-			{
-				m_TileMapEditor.HandleBrushStrokeContinuousReset();
-			}
-
-			if (clicked || dragging)
-			{
-				auto [mx, my] = Input::GetMousePosition();
-				float vpW = m_ViewportSize.x;
-				float vpH = m_ViewportSize.y;
-				if (vpW > 0 && vpH > 0)
-				{
-					glm::vec2 ndc = (glm::vec2(mx, my) / glm::vec2(vpW, vpH)) * 2.0f - 1.0f;
-					ndc.y = -ndc.y;
-					glm::mat4 invVP = glm::inverse(m_CameraController.GetCamera().GetViewProjectionMatrix());
-					glm::vec4 world4 = invVP * glm::vec4(ndc, 0.0f, 1.0f);
-					glm::vec3 worldPos = glm::vec3(world4) / world4.w;
-					float tileSize = m_EditorTileMap.GetTileSize();
-					glm::ivec2 gridPos(
-						static_cast<int>(std::floor(worldPos.x / tileSize)),
-						static_cast<int>(std::floor(worldPos.y / tileSize)));
-					if (clicked)
-						m_TileMapEditor.HandleBrushStroke(gridPos);
-					else
-						m_TileMapEditor.HandleBrushStrokeContinuous(gridPos);
-				}
-			}
-		}
+		// TileMap brush painting
+		HandleViewportTileMapBrush(m_ViewportSize);
 
 		if (m_ShowQuickAddPanel)
 		{
@@ -2242,9 +2312,6 @@ namespace Quentlam
 				}
 			}
 		}
-
-		ImGui::End();
-		ImGui::PopStyleVar();
 
 		// Content Browser Panel
 		if (m_IsContentBrowserOpen)
@@ -2448,8 +2515,132 @@ namespace Quentlam
 			m_MaterialEditor.OnImGuiRender();
 		}
 
+		// Console Panel
+		if (m_ShowConsole)
+		{
+			m_ConsolePanel.OnImGuiRender();
+		}
+
+		// Profiler Panel
+		if (m_ShowProfiler)
+		{
+			m_ProfilerOverlay.CollectMetrics();
+			m_ProfilerOverlay.OnImGuiRender();
+		}
+
+		// Asset Browser Panel (new)
+		if (m_ShowAssetBrowser)
+		{
+			m_AssetBrowserPanel.OnImGuiRender();
+		}
+
+		// Animation Editor Panel
+		if (m_ShowAnimationEditor)
+		{
+			m_AnimationEditorPanel.SetScene(m_ActiveScene.get());
+			m_AnimationEditorPanel.OnImGuiRender();
+		}
+
+		// Atlas Builder Panel
+		if (m_ShowAtlasBuilder)
+		{
+			m_AtlasBuilderPanel.SetScene(m_ActiveScene.get());
+			m_AtlasBuilderPanel.OnImGuiRender();
+		}
+
+		// NavMesh Editor Panel
+		m_NavMeshEditorPanel.OnImGuiRender();
+
+		// Animator Editor Panel
+		m_AnimatorEditorPanel.OnImGuiRender();
+
 		ImGui::End(); // Viewport
 
+	}
+
+	// ---- Helper Methods ----
+
+	void EditorLayer::HandleViewportDragDrop(const glm::vec2& vpSize)
+	{
+		if (ImGui::BeginDragDropTarget())
+		{
+			if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM"))
+			{
+				const wchar_t* path = (const wchar_t*)payload->Data;
+				std::filesystem::path fullPath = std::filesystem::path("assets") / path;
+
+				if (fullPath.extension() == ".obj" || fullPath.extension() == ".fbx")
+				{
+					QL_CORE_INFO("Loading Model: {0}", fullPath.string());
+					Entity newEntity = m_ActiveScene->CreateEntity(fullPath.filename().string());
+					m_ModelEntity = newEntity;
+					m_Model = CreateRef<Model>(fullPath.string());
+					m_SelectedEntity = newEntity;
+				}
+				else if (fullPath.extension() == ".png" || fullPath.extension() == ".jpg")
+				{
+					QL_CORE_INFO("Loading Texture: {0}", fullPath.string());
+					Entity newEntity = m_ActiveScene->CreateEntity(fullPath.filename().string());
+					newEntity.AddComponent<SpriteTransformComponent>();
+					m_SelectedEntity = newEntity;
+				}
+			}
+			ImGui::EndDragDropTarget();
+		}
+	}
+
+	void EditorLayer::HandleViewportMousePick(bool sceneViewport)
+	{
+		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver())
+		{
+			if (m_HoveredEntity)
+			{
+				m_SelectedEntity = m_HoveredEntity;
+			}
+			else
+			{
+				m_SelectedEntity = {};
+			}
+		}
+	}
+
+	void EditorLayer::HandleViewportTileMapBrush(const glm::vec2& vpSize)
+	{
+		if (!m_ShowTileMapEditor || !ImGui::IsWindowHovered() || ImGuizmo::IsOver() || ImGui::IsAnyItemActive())
+			return;
+
+		bool clicked = ImGui::IsMouseClicked(0);
+		bool released = ImGui::IsMouseReleased(0);
+		bool dragging = ImGui::IsMouseDown(0);
+
+		if (released)
+		{
+			m_TileMapEditor.HandleBrushStrokeContinuousReset();
+			return;
+		}
+
+		if (!clicked && !dragging)
+			return;
+
+		auto [mx, my] = Input::GetMousePosition();
+		float vpW = vpSize.x;
+		float vpH = vpSize.y;
+		if (vpW <= 0 || vpH <= 0)
+			return;
+
+		glm::vec2 ndc = (glm::vec2(mx, my) / glm::vec2(vpW, vpH)) * 2.0f - 1.0f;
+		ndc.y = -ndc.y;
+		glm::mat4 invVP = glm::inverse(m_CameraController.GetCamera().GetViewProjectionMatrix());
+		glm::vec4 world4 = invVP * glm::vec4(ndc, 0.0f, 1.0f);
+		glm::vec3 worldPos = glm::vec3(world4) / world4.w;
+		float tileSize = m_EditorTileMap.GetTileSize();
+		glm::ivec2 gridPos(
+			static_cast<int>(std::floor(worldPos.x / tileSize)),
+			static_cast<int>(std::floor(worldPos.y / tileSize)));
+		if (clicked)
+			m_TileMapEditor.HandleBrushStroke(gridPos);
+		else
+			m_TileMapEditor.HandleBrushStrokeContinuous(gridPos);
 	}
 
 }

@@ -3,6 +3,7 @@
 #include "Quentlam/Core/Base.h"
 
 #include <glad/glad.h>
+#include <iostream>
 
 namespace Quentlam
 {
@@ -60,7 +61,7 @@ namespace Quentlam
 						glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, m_ColorAttachments[i], 0);
 						break;
 					case FramebufferTextureFormat::RED_INTEGER:
-						glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, m_Specification.Width, m_Specification.Height, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, nullptr);
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_R32I, m_Specification.Width, m_Specification.Height, 0, GL_RED_INTEGER, GL_INT, nullptr);
 						glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 						glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 						glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
@@ -122,9 +123,33 @@ namespace Quentlam
 
 	int OpenGLFrameBuffer::ReadPixel(uint32_t attachmentIndex, int x, int y)
 	{
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, m_RendererID);
+		GLenum status = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE)
+		{
+			QL_CORE_ERROR("ReadPixel: framebuffer incomplete! status={0}", status);
+			return -1;
+		}
 		glReadBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
+		GLenum err = glGetError();
+		if (err != GL_NO_ERROR)
+		{
+			QL_CORE_ERROR("ReadPixel: glReadBuffer error={0}", err);
+			return -1;
+		}
+		glPixelStorei(GL_PACK_ALIGNMENT, 1);
+		glFinish();
 		int pixelData;
-		glReadPixels(x, y, 1, 1, GL_RED_INTEGER, GL_INT, &pixelData);
+		glReadPixels(x, m_Specification.Height - 1 - y, 1, 1, GL_RED_INTEGER, GL_INT, &pixelData);
+		err = glGetError();
+		if (err != GL_NO_ERROR)
+		{
+			QL_CORE_ERROR("ReadPixel: glReadPixels error={0}", err);
+			return -1;
+		}
+		if (pixelData != -1)
+			QL_CORE_INFO("ReadPixel: attach={0} x={1} y={2} fbH={3} flippedY={4} value={5}",
+				attachmentIndex, x, y, m_Specification.Height, m_Specification.Height - 1 - y, pixelData);
 		return pixelData;
 	}
 

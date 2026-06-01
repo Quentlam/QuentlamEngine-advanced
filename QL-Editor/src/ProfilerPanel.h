@@ -2,81 +2,51 @@
 
 #include "imgui/imgui.h"
 #include <string>
+#include <vector>
 
 namespace Quentlam {
 
-    // ---------------------------------------------------------
-    // Performance Profiler Panel (Real-time Metrics)
-    // ---------------------------------------------------------
-
-    class ProfilerPanel {
+    class EditorProfilerOverlay {
     public:
-        // Current metrics collected from Renderer2D/Core
-        struct Metrics {
-            float FPS = 60.0f;
-            int DrawCalls = 0;
-            float TextureMemoryMB = 0.0f;
-            float GCPeakMB = 0.0f; // For script environment
+        struct ModuleStats {
+            std::string Name;
+            float TimeMs = 0.0f;
         };
 
-        Metrics CurrentMetrics;
+        struct Metrics {
+            float FPS = 60.0f;
+            float FrameMs = 0.0f;
+            int DrawCalls2D = 0;
+            int DrawCalls3D = 0;
+            int QuadCount = 0;
+            int CubeCount = 0;
+            int VertexCount2D = 0;
+            int VertexCount3D = 0;
+            float TextureMemoryMB = 0.0f;
+            int TextureCount = 0;
+            std::vector<ModuleStats> Modules;
+        };
 
-        void OnImGuiRender() {
-            ImGui::Begin("Performance Profiler");
+        void OnImGuiRender();
+        void CollectMetrics();
 
-            ImGui::Text("FPS: %.1f", CurrentMetrics.FPS);
+        bool IsVisible() const { return m_Visible; }
+        void Toggle() { m_Visible = !m_Visible; }
+        void SetVisible(bool v) { m_Visible = v; }
 
-            // DrawCall > 60 automatically highlighted red
-            if (CurrentMetrics.DrawCalls > 60)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-            else
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-            ImGui::Text("DrawCalls: %d", CurrentMetrics.DrawCalls);
-            ImGui::PopStyleColor();
+    private:
+        void DrawMetrics();
+        void DrawFPSGraph();
+        void DrawBar(const char* label, float value, float max, const ImVec4& color);
 
-            // Texture Memory > 120MB automatically highlighted red
-            if (CurrentMetrics.TextureMemoryMB > 120.0f)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-            else
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f));
-            ImGui::Text("Texture Memory: %.1f MB", CurrentMetrics.TextureMemoryMB);
-            ImGui::PopStyleColor();
+        bool m_Visible = true;
+        int m_GraphDataCount = 60;
+        std::vector<float> m_FPSHistory;
+        std::vector<float> m_FrameMsHistory;
+        Metrics m_Metrics;
 
-            ImGui::Text("GC Peak: %.1f MB", CurrentMetrics.GCPeakMB);
-
-            ImGui::End();
-        }
-    };
-
-    // ---------------------------------------------------------
-    // Multi-platform Exporter & Previewer
-    // ---------------------------------------------------------
-
-    class MultiPlatformExporter {
-    public:
-        enum class Platform { WebGL, WeChatMiniGame, Android, iOS, Windows };
-
-        void OneClickPreview(Platform targetPlatform) {
-            switch(targetPlatform) {
-                case Platform::WebGL:
-                    // 1. Emscripten compile/bundle
-                    // 2. Launch local python http.server
-                    // 3. Open browser at localhost:8000
-                    break;
-                case Platform::WeChatMiniGame:
-                    // 1. Pack JS + Wasm
-                    // 2. Export project.config.json
-                    // 3. Open WeChat DevTools CLI
-                    break;
-                case Platform::Android:
-                    // 1. Build APK via Gradle
-                    // 2. ADB install & run on connected device
-                    break;
-                case Platform::iOS:
-                    // 1. Generate Xcode project
-                    // 2. xcodebuild & deploy to simulator/device
-                    break;
-            }
-        }
+        static constexpr float kDefaultMaxFPS = 144.0f;
+        static constexpr float kDefaultMaxFrameMs = 16.67f;
+        static constexpr float kDefaultMaxDrawCalls = 200.0f;
     };
 }

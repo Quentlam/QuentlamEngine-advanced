@@ -2,8 +2,10 @@
 #include "Renderer.h"
 #include "OrthographicCamera.h"
 #include "PerspectiveCamera.h"
+#include "Camera.h"
 #include "Texture.h"
 #include "SubTexture2D.h"
+#include "ParticleSystem2D.h"
 
 namespace Quentlam
 {
@@ -18,6 +20,7 @@ namespace Quentlam
 
 		static void BeginScene(OrthographicCamera& camera);
 		static void BeginScene(const PerspectiveCamera& camera);
+		static void BeginScene(const Camera& camera);
 		static void EndScene();
 		static void Flush();
 
@@ -66,7 +69,9 @@ namespace Quentlam
 		static void ResetStats();
 		static Statistics GetStatistics();
 
-	
+		static void DrawParticle(const glm::mat4& transform, const struct Particle2D& particle, const Ref<Texture2D>& texture, int entityID = -1);
+		static Ref<Texture2D> GetWhiteTexture();
+
 	private:
 		static void FlushAndReset();
 

@@ -1,32 +1,33 @@
-#pragma once
+﻿#pragma once
 #include <memory>
+#include <glm/glm.hpp>
 
 
 #ifdef _WIN32
-		#ifdef _WIN64
+	#ifdef _WIN64
 
-			#define QL_PALTFORM_WINDOWS
-			#ifndef WIN32_LEAN_AND_MEAN
-				#define WIN32_LEAN_AND_MEAN
-			#endif
-			#ifndef NOMINMAX
-				#define NOMINMAX
-			#endif
-			#include <windows.h>
-			#ifdef State
-				#undef State
-			#endif
-
-		#else
-
-		#error "x86 Builds are not supported!"
-
+		#define QL_PALTFORM_WINDOWS
+		#ifndef WIN32_LEAN_AND_MEAN
+			#define WIN32_LEAN_AND_MEAN
+		#endif
+		#ifndef NOMINMAX
+			#define NOMINMAX
+		#endif
+		#include <windows.h>
+		#ifdef State
+			#undef State
 		#endif
 
+	#else
+
+	#error "x86 Builds are not supported!"
+
+	#endif
+
 #elif	defined(__APPLE__) || defined(__MACH__)
-		#include<TargetConditionals.h>
-		#if TARGET_IPHONE_SIMULATOR == 1
-			#error "IOS simulator is not supported!"
+	#include<TargetConditionals.h>
+	#if TARGET_IPHONE_SIMULATOR == 1
+		#error "IOS simulator is not supported!"
 	#elif TARGET_OS_IPHONE == 1
 		#define QL_PALTFORM_IOS
 		#error "IOS is not supported!"
@@ -86,7 +87,7 @@ namespace Quentlam
 {
 
 	template<typename T>
-	using Scope = std::unique_ptr<T>;//Ψһָ��
+	using Scope = std::unique_ptr<T>;
 
 	template<typename T, typename ... Args>
 	constexpr Scope<T> CreateScope(Args&& ... args)
@@ -95,7 +96,7 @@ namespace Quentlam
 	}
 
 	template<typename T>
-	using Ref = std::shared_ptr<T>;//����ָ��
+	using Ref = std::shared_ptr<T>;
 	template<typename T,typename ... Args>
 	constexpr Ref<T> CreateRef(Args&& ... args)
 	{

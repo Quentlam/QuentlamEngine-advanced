@@ -21,7 +21,11 @@ namespace Quentlam
 		const PerspectiveCamera& GetCamera() const { return m_Camera; }
 
 		float GetZoomLevel() const { return m_ZoomLevel; }
-		void SetZoomLevel(float level) { m_ZoomLevel = level; m_Camera.SetProjection(m_ZoomLevel, m_AspectRatio); }
+		void SetZoomLevel(float level) { m_ZoomLevel = level; m_Camera.SetPerspective(level, m_AspectRatio, 0.1f, 1000.0f); }
+		glm::vec3 GetPosition() const { return m_CameraPosition; }
+		glm::vec3 GetRotation() const { return m_CameraRotation; }
+		void SetPosition(const glm::vec3& pos) { m_CameraPosition = pos; m_Camera.SetPosition(pos); }
+		void SetRotation(const glm::vec3& rot) { m_CameraRotation = rot; }
 	private:
 		bool OnMouseScrolled(MouseScrolledEvent& e);
 		bool OnWindowResized(WindowResizeEvent& e);

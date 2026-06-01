@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Renderer.h"
-#include "OrthographicCamera.h" 
+#include "Camera.h"
+#include "OrthographicCamera.h"
 #include "PerspectiveCamera.h"
 #include "Model.h"
 #include "Texture.h"
@@ -16,6 +17,7 @@ namespace Quentlam
 
 		static void BeginScene(OrthographicCamera& camera);
 		static void BeginScene(const PerspectiveCamera& camera);
+		static void BeginScene(const Camera& camera);
 		static void EndScene();
 		static void Flush();
 
@@ -39,6 +41,11 @@ namespace Quentlam
 
 		static void ResetStats();
 		static Statistics GetStatistics();
+
+		static void SetDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity);
+
+		// Gizmos (editor overlay)
+		static void DrawCameraFrustum(const glm::vec3& position, const glm::vec3& rotation, float fov, float aspectRatio, float nearClip, float farClip, const glm::vec4& color = glm::vec4(1.0f, 0.5f, 0.0f, 1.0f));
 
 	private:
 		static void FlushAndReset();

@@ -9,9 +9,6 @@
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 
-#include "Sandbox2D.h"
-#include "Sandbox3D.h"
-#include "AudioTestLayer.h"
 #include "SaveLoadTestLayer.h"
 #include "Quentlam/UI/GameUILayer.h"
 #include "Quentlam/Gameplay/Inventory/InventoryModule.h"
@@ -294,12 +291,7 @@ namespace Quentlam
 			emilySched->AddEntry({ 20, 0, { 10, 7 }, "", "", "", ESchedulePriority::Normal, "" });
 		}
 
-		PushLayer(new Sandbox2D());
-		PushLayer(new AudioTestLayer());
 		PushLayer(new SaveLoadTestLayer());
-		auto* gameUILayer = new Quentlam::GameUILayer();
-		gameUILayer->SetInventoryContainer(CreateRef<Container>(m_TestInventory));
-		PushLayer(gameUILayer);
 	}
 		~Sandbox()
 		{

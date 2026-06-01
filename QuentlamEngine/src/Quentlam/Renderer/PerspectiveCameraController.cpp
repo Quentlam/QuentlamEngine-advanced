@@ -132,11 +132,11 @@ namespace Quentlam
 
 	void PerspectiveCameraController::OnResize(float width, float height)
 	{
-		// Guard against division by zero
 		if (height <= 0.0f)
 			return;
 
-		m_AspectRatio = width / height;
-		m_Camera.SetProjection(m_ZoomLevel, m_AspectRatio);
+		float aspect = (width <= 0.0f) ? 1.78f : (width / height);
+		m_AspectRatio = aspect;
+		m_Camera.SetPerspective(m_ZoomLevel, m_AspectRatio, 0.1f, 1000.0f);
 	}
 }

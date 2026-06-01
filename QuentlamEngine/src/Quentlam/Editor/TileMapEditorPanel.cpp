@@ -33,6 +33,11 @@ namespace Quentlam
 			return;
 		}
 
+		ImGui::Text("工具栏");
+		ImGui::Separator();
+		RenderToolBar();
+
+		ImGui::Spacing();
 		ImGui::Text("瓦片调色板");
 		ImGui::Separator();
 		RenderTilePalette();
@@ -187,21 +192,113 @@ namespace Quentlam
 		}
 	}
 
+	void TileMapEditorPanel::RenderToolBar()
+	{
+		const char* toolNames[] = { "Brush", "Eraser", "Fill", "Picker" };
+		for (int i = 0; i < 4; ++i)
+		{
+			bool selected = (m_CurrentTool == static_cast<ETileMapTool>(i));
+			ImGui::PushID(i);
+			if (ImGui::Button(toolNames[i], ImVec2(70, 24)))
+				m_CurrentTool = static_cast<ETileMapTool>(i);
+			if (selected)
+				ImGui::SameLine();
+			ImGui::PopID();
+		}
+	}
+
+	void TileMapEditorPanel::FloodFill(const glm::ivec2& pos, ETileType newType)
+	{
+		if (!m_TileMap || !m_TileMap->IsValidPosition(pos))
+			return;
+
+		TileLayerData* tileData = m_TileMap->GetTileLayer(pos, ETileLayer::Ground);
+		if (!tileData)
+			return;
+
+		ETileType targetType = tileData->Type;
+
+		if (targetType == newType)
+			return;
+
+		std::stack<glm::ivec2> stack;
+		stack.push(pos);
+
+		while (!stack.empty())
+		{
+			glm::ivec2 current = stack.top();
+			stack.pop();
+
+			if (!m_TileMap->IsValidPosition(current))
+				continue;
+
+			TileLayerData* td = m_TileMap->GetTileLayer(current, ETileLayer::Ground);
+			if (!td || td->Type != targetType)
+				continue;
+
+			m_TileMap->SetTileLayer(current, ETileLayer::Ground, newType);
+
+			stack.emplace(current.x + 1, current.y);
+			stack.emplace(current.x - 1, current.y);
+			stack.emplace(current.x, current.y + 1);
+			stack.emplace(current.x, current.y - 1);
+		}
+	}
+
 	void TileMapEditorPanel::HandleBrushStroke(const glm::ivec2& gridPos)
 	{
 		if (!m_TileMap) return;
 
-		int half = m_BrushSize / 2;
-		for (int dy = -half; dy <= half; ++dy)
+		switch (m_CurrentTool)
 		{
-			for (int dx = -half; dx <= half; ++dx)
+		case ETileMapTool::Eraser:
+		{
+			int half = m_BrushSize / 2;
+			for (int dy = -half; dy <= half; ++dy)
 			{
-				glm::ivec2 pos(gridPos.x + dx, gridPos.y + dy);
-				if (m_TileMap->IsValidPosition(pos))
+				for (int dx = -half; dx <= half; ++dx)
 				{
-					m_TileMap->SetTileType(pos, m_BrushType);
+					glm::ivec2 pos(gridPos.x + dx, gridPos.y + dy);
+					if (m_TileMap->IsValidPosition(pos))
+						m_TileMap->SetTileType(pos, ETileType::Empty);
 				}
 			}
+			break;
+		}
+		case ETileMapTool::Fill:
+		{
+			FloodFill(gridPos, m_BrushType);
+			break;
+		}
+		case ETileMapTool::Picker:
+		{
+			if (m_TileMap->IsValidPosition(gridPos))
+			{
+				auto* td = m_TileMap->GetTileLayer(gridPos, ETileLayer::Ground);
+				if (td)
+				{
+					m_BrushType = td->Type;
+					m_CurrentTool = ETileMapTool::Brush;
+					QL_CORE_INFO("Picked tile type: {0}", static_cast<int>(td->Type));
+				}
+			}
+			break;
+		}
+		case ETileMapTool::Brush:
+		default:
+		{
+			int half = m_BrushSize / 2;
+			for (int dy = -half; dy <= half; ++dy)
+			{
+				for (int dx = -half; dx <= half; ++dx)
+				{
+					glm::ivec2 pos(gridPos.x + dx, gridPos.y + dy);
+					if (m_TileMap->IsValidPosition(pos))
+						m_TileMap->SetTileType(pos, m_BrushType);
+				}
+			}
+			break;
+		}
 		}
 	}
 

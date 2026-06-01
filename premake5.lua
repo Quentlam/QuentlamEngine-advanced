@@ -108,13 +108,7 @@ workspace "QuentlamEngine"
 			"QuentlamEngine/vendor/JoltPhysics"
 		}
 
-		defines
-		{
-			"JPH_PROFILE_ENABLED",
-			"JPH_DEBUG_RENDERER"
-		}
-
-		buildoptions { "/FS" }
+		buildoptions { "/FS", "/MP" }
 
 		filter "system:windows"
 			systemversion "latest"
@@ -124,7 +118,7 @@ workspace "QuentlamEngine"
 			runtime "Debug"
 
 		filter "configurations:Release"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
+			defines {}
 			runtime "Release"
 
 		filter "configurations:Dist"
@@ -135,6 +129,7 @@ workspace "QuentlamEngine"
 		location "QuentlamEngine/vendor/lua"
 		kind "StaticLib"
 		language "C"
+		staticruntime "on"
 
 		targetdir("bin/" ..outputdir.. "/%{prj.name}")
 		objdir("bin-int/" ..outputdir.. "/%{prj.name}")
@@ -215,7 +210,7 @@ workspace "QuentlamEngine"
 
 		filter "system:windows"
 			systemversion "latest"
-			buildoptions { "/wd4005" }  -- suppress macro-redefinition warnings for lua headers
+			buildoptions { "/wd4005", "/MP" }  -- suppress macro-redefinition warnings for lua headers
 
 		filter "configurations:Debug"
 			runtime "Debug"
@@ -291,6 +286,8 @@ workspace "QuentlamEngine"
 			"opengl32.lib"
 		}
 
+		-- /MP: parallel compilation across multiple CPU cores
+		buildoptions { "/MP" }
 		filter "system:windows"
 			staticruntime "on"
 			systemversion "latest"
@@ -303,22 +300,23 @@ workspace "QuentlamEngine"
 				"GLFW_INCLUDE_NONE"
 			}
 
+		-- /MP: parallel compilation across multiple cores
+		-- /Gm: minimal rebuild (only recompile changed files + dependencies)
+		buildoptions { "/MP", "/Gm" }
 		filter "configurations:Debug"
 			defines "QL_DEBUG"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 			runtime "Debug"
 			symbols "on"
 			links { "QuentlamEngine/vendor/assimp/build/lib/Debug/assimp-vc143-mtd.lib", "QuentlamEngine/vendor/assimp/build/contrib/zlib/Debug/zlibstaticd.lib" }
 
 		filter "configurations:Release"
-			defines "QL_RELEASE"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
+			defines { "QL_RELEASE" }
 			runtime "Release"
 			optimize "on"
 			links { "QuentlamEngine/vendor/assimp/build/lib/Release/assimp-vc143-mt.lib", "QuentlamEngine/vendor/assimp/build/contrib/zlib/Release/zlibstatic.lib" }
 
 		filter "configurations:Dist"
-			defines "QL_DIST"
+			defines { "QL_DIST" }
 			runtime "Release"
 			optimize "on"
 			links { "QuentlamEngine/vendor/assimp/build/lib/Release/assimp-vc143-mt.lib", "QuentlamEngine/vendor/assimp/build/contrib/zlib/Release/zlibstatic.lib" }
@@ -374,6 +372,8 @@ workspace "QuentlamEngine"
 			"Box2D"
 		}
 
+		-- /MP: parallel compilation across multiple CPU cores
+		buildoptions { "/MP" }
 		filter "system:windows"
 			staticruntime "On"
 			systemversion "latest"
@@ -386,13 +386,11 @@ workspace "QuentlamEngine"
 
 		filter "configurations:Debug"
 			defines "QL_DEBUG"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 			runtime "Debug"
 			symbols "on"
 
 		filter "configurations:Release"
-			defines "QL_RELEASE"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
+			defines { "QL_RELEASE" }
 			runtime "Release"
 			optimize "on"
 			symbols "on"
@@ -431,6 +429,8 @@ workspace "QuentlamEngine"
 			"QuentlamEngine/vendor/spdlog/include",
 			"QuentlamEngine/src",
 			"QuentlamEngine/vendor",
+			"QuentlamEngine/vendor/stb_image",
+			"QuentlamEngine/vendor/imgui/misc/cpp",
 			"%{IncludeDir.GLFW}",
 			"%{IncludeDir.glm}",
 			"%{IncludeDir.ImGui}",
@@ -442,7 +442,9 @@ workspace "QuentlamEngine"
 			"%{IncludeDir.assimp_build}",
 			"%{IncludeDir.assimp_rapidjson}",
 			"%{IncludeDir.sol2}",
-			"%{IncludeDir.lua}"
+			"%{IncludeDir.lua}",
+			"%{IncludeDir.JoltPhysics}",
+			"%{IncludeDir.miniaudio}"
 		}
 
 		externalincludedirs
@@ -453,9 +455,15 @@ workspace "QuentlamEngine"
 		links
 		{
 			"QuentlamEngine",
-			"Box2D"
+			"Box2D",
+			"JoltPhysics",
+			"Lua",
+			"winmm.lib",
+			"gdi32.lib"
 		}
 
+		-- /MP: parallel compilation across multiple CPU cores
+		buildoptions { "/MP" }
 		filter "system:windows"
 			staticruntime "On"
 			systemversion "latest"
@@ -468,16 +476,16 @@ workspace "QuentlamEngine"
 
 		filter "configurations:Debug"
 			defines "QL_DEBUG"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 			runtime "Debug"
 			symbols "on"
+			links { "QuentlamEngine/vendor/assimp/build/lib/Debug/assimp-vc143-mtd.lib", "QuentlamEngine/vendor/assimp/build/contrib/zlib/Debug/zlibstaticd.lib" }
 
 		filter "configurations:Release"
 			defines "QL_RELEASE"
-			defines { "JPH_PROFILE_ENABLED", "JPH_DEBUG_RENDERER" }
 			runtime "Release"
 			optimize "on"
 			symbols "on"
+			links { "QuentlamEngine/vendor/assimp/build/lib/Release/assimp-vc143-mt.lib", "QuentlamEngine/vendor/assimp/build/contrib/zlib/Release/zlibstatic.lib" }
 
 		filter "configurations:Dist"
 			defines "QL_DIST"

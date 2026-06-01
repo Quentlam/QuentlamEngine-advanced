@@ -20,6 +20,9 @@ namespace Quentlam
 
 	};
 
+	// Provided for Instrumentor.h to safely access the logger without including Log.h
+	QUENTLAM_API std::shared_ptr<spdlog::logger>& GetBaseLoggerRef();
+
 
 }
 

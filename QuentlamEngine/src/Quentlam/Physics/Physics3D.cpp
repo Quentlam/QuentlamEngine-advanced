@@ -198,9 +198,12 @@ namespace Quentlam {
 		s_Data = new PhysicsData();
 		s_RuntimeScene = scene;
 		s_Data->tempAllocator = new TempAllocatorImpl(10 * 1024 * 1024);
-		uint32_t workerThreads = std::max(1u, thread::hardware_concurrency());
+		uint32_t hwConcurrency = thread::hardware_concurrency();
+		uint32_t workerThreads = hwConcurrency > 1 ? hwConcurrency - 1 : 1;
+		QL_CORE_WARN("Physics3D: hardware_concurrency={0}, using {1} worker threads", hwConcurrency, workerThreads);
 		s_Data->jobSystem = new JobSystemThreadPool(cMaxPhysicsJobs, cMaxPhysicsBarriers, workerThreads);
 		s_Data->physicsSystem = new PhysicsSystem();
+		QL_CORE_WARN("Physics3D: physics system created, initializing broad phase...");
 
 		const uint cMaxBodies = 1024;
 		const uint cNumBodyMutexes = 0;
@@ -209,6 +212,7 @@ namespace Quentlam {
 
 		s_Data->physicsSystem->Init(cMaxBodies, cNumBodyMutexes, cMaxBodyPairs, cMaxContactConstraints,
 			s_Data->broadPhaseLayerInterface, s_Data->objectVsBroadPhaseLayerFilter, s_Data->objectVsObjectLayerFilter);
+		QL_CORE_WARN("Physics3D: physics system initialized, creating bodies...");
 
 		BodyInterface& bodyInterface = s_Data->physicsSystem->GetBodyInterface();
 

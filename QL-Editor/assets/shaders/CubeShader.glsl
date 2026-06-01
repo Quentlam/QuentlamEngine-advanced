@@ -68,6 +68,9 @@ in float v_Shininess;
 uniform sampler2D u_Textures[32];
 
 uniform vec3 u_ViewPos;
+uniform vec3 u_LightDirection;
+uniform vec3 u_LightColor;
+uniform float u_LightIntensity;
 
 void main()
 {
@@ -107,28 +110,28 @@ void main()
 	case 30:texColor *= texture(u_Textures[30],v_TexCoord * v_TilingFactor); break;
 	case 31:texColor *= texture(u_Textures[31],v_TexCoord * v_TilingFactor); break;
 	}
-	
+
 	if (texColor.a < 0.1) discard;
 
-	vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0)); // Fixed light direction for now
-	vec3 lightColor = vec3(1.0, 1.0, 1.0);
+	vec3 lightDir = normalize(-u_LightDirection);
+	vec3 lightColor = u_LightColor * u_LightIntensity;
 	vec3 norm = normalize(v_Normal);
-	
+
 	// Ambient
 	vec3 ambient = v_AmbientStrength * lightColor;
-	
+
 	// Diffuse
 	float diff = max(dot(norm, lightDir), 0.0);
 	vec3 diffuse = v_DiffuseStrength * diff * lightColor;
-	
+
 	// Specular
 	vec3 viewDir = length(u_ViewPos) > 0.01 ? normalize(u_ViewPos - v_FragPos) : vec3(0.0, 0.0, 1.0);
 	vec3 reflectDir = reflect(-lightDir, norm);
 	float spec = pow(max(dot(viewDir, reflectDir), 0.0), v_Shininess);
 	vec3 specular = v_SpecularStrength * spec * lightColor;
-	
+
 	vec3 result = (ambient + diffuse + specular) * texColor.rgb;
-	
+
 	color = vec4(result, texColor.a);
 	color2 = v_EntityID;
 }

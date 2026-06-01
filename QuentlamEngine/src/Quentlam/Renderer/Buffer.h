@@ -1,11 +1,12 @@
 #pragma once
-#include "qlpch.h"
+
+#include "Quentlam/Core/Base.h"
 
 namespace Quentlam
 {
-	enum class QUENTLAM_API ShaderDataType
+	enum ShaderDataType
 	{
-		None = 0, Float, Float2, Float3, Float4, Mat3, Mat4, Int, Int2, Int3, Int4, Bool
+		NoneSDT = 0, Float, Float2, Float3, Float4, Mat3, Mat4, Int, Int2, Int3, Int4, Bool
 	};
 
 	static uint32_t ShaderDataTypeSize(ShaderDataType type)
@@ -24,15 +25,14 @@ namespace Quentlam
 		case ShaderDataType::Int4:	    return 4 * 4;
 		case ShaderDataType::Bool:	    return 1;
 		}
-		QL_CORE_ASSERT(false, "Unknodw ShaderDataType!");
 		return 0;
 
 	}
 
 
-	struct QUENTLAM_API BufferElement
+	struct BufferElement
 	{
-		BufferElement() : Name("null"), Type(ShaderDataType::None), Size(0), Offset(0), Normalized(false) {};
+		BufferElement() : Name("null"), Type(ShaderDataType::NoneSDT), Size(0), Offset(0), Normalized(false) {};
 		std::string Name;
 		ShaderDataType Type;
 		uint32_t Offset;
@@ -59,7 +59,6 @@ namespace Quentlam
 				case ShaderDataType::Int4:	    return 4;
 				case ShaderDataType::Bool:	    return 1;
 			}
-			QL_CORE_ASSERT(false, "Unknodw ShaderDataType!");
 			return 0;
 		}
 
@@ -67,7 +66,7 @@ namespace Quentlam
 
 
 
-	class QUENTLAM_API BufferLayout
+	class BufferLayout
 	{
 	public:
 		BufferLayout() {};

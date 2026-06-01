@@ -2,6 +2,7 @@
 #include "AnimationLoader.h"
 #include "AnimationModule.h"
 #include "Quentlam/Renderer/Texture.h"
+#include "Quentlam/Resource/ResourceManager.h"
 #include <fstream>
 #include <rapidjson/document.h>
 #include <sstream>
@@ -36,27 +37,54 @@ namespace Quentlam
 		}
 
 		std::string atlasPath;
-		if (doc.HasMember("atlas") && doc["atlas"].IsString())
-			atlasPath = doc["atlas"].GetString();
-
 		int columns = 1, rows = 1;
+		glm::ivec2 frameSize = { 32, 32 };
+
+		if (doc.HasMember("atlas"))
+		{
+			const rapidjson::Value& atlasVal = doc["atlas"];
+			if (atlasVal.IsString())
+			{
+				atlasPath = atlasVal.GetString();
+			}
+			else if (atlasVal.IsObject())
+			{
+				if (atlasVal.HasMember("path") && atlasVal["path"].IsString())
+					atlasPath = atlasVal["path"].GetString();
+				if (atlasVal.HasMember("columns") && atlasVal["columns"].IsInt())
+					columns = atlasVal["columns"].GetInt();
+				if (atlasVal.HasMember("rows") && atlasVal["rows"].IsInt())
+					rows = atlasVal["rows"].GetInt();
+				if (atlasVal.HasMember("frameWidth") && atlasVal["frameWidth"].IsInt())
+					frameSize.x = atlasVal["frameWidth"].GetInt();
+				if (atlasVal.HasMember("frameHeight") && atlasVal["frameHeight"].IsInt())
+					frameSize.y = atlasVal["frameHeight"].GetInt();
+			}
+		}
+
 		if (doc.HasMember("columns") && doc["columns"].IsInt())
 			columns = doc["columns"].GetInt();
 		if (doc.HasMember("rows") && doc["rows"].IsInt())
 			rows = doc["rows"].GetInt();
+		if (doc.HasMember("frameWidth") && doc["frameWidth"].IsInt())
+			frameSize.x = doc["frameWidth"].GetInt();
+		if (doc.HasMember("frameHeight") && doc["frameHeight"].IsInt())
+			frameSize.y = doc["frameHeight"].GetInt();
 
-		outAtlasTexture = Texture2D::Create(atlasPath);
+		if (!atlasPath.empty())
+		{
+			outAtlasTexture = ResourceManager::Load<Texture2D>(atlasPath, atlasPath);
+		}
+		else
+		{
+			outAtlasTexture = nullptr;
+		}
 
 		outAtlasBinding = CreateRef<SpriteAtlasBinding>();
 		outAtlasBinding->AtlasPath = atlasPath;
 		outAtlasBinding->AtlasColumns = columns;
 		outAtlasBinding->AtlasRows = rows;
-		outAtlasBinding->DefaultFrameSize = { 32, 32 };
-
-		if (doc.HasMember("frameWidth") && doc["frameWidth"].IsInt())
-			outAtlasBinding->DefaultFrameSize.x = doc["frameWidth"].GetInt();
-		if (doc.HasMember("frameHeight") && doc["frameHeight"].IsInt())
-			outAtlasBinding->DefaultFrameSize.y = doc["frameHeight"].GetInt();
+		outAtlasBinding->DefaultFrameSize = frameSize;
 
 		outClips.clear();
 		if (doc.HasMember("clips") && doc["clips"].IsArray())
@@ -64,7 +92,7 @@ namespace Quentlam
 			const auto& clips = doc["clips"].GetArray();
 			for (const auto& c : clips)
 			{
-				if (c.HasMember("name") && c.HasMember("frames"))
+				if (c.HasMember("name"))
 				{
 					std::string clipName = c["name"].GetString();
 					outClips.push_back(LoadClipFromJson(clipName, c, outAtlasBinding));
@@ -75,4 +103,4 @@ namespace Quentlam
 		return true;
 	}
 
-}
+} // namespace Quentlam

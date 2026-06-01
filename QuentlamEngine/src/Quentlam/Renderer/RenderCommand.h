@@ -2,6 +2,7 @@
 
 #include "RendererAPI.h"
 #include "Quentlam/Core/Base.h"
+#include "Quentlam/Debug/Instrumentor.h"
 
 namespace Quentlam
 {

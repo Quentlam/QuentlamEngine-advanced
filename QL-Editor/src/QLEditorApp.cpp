@@ -1,4 +1,5 @@
 #include "qlpch.h"
+#include <filesystem>
 #include <Quentlam.h>
 //----------Entry Point --------------------------
 #include <Quentlam/Core/EntryPoint.h>
@@ -220,7 +221,52 @@ namespace Quentlam
 		QLEditor()
 			:Application("QLEditor")
 		{
-			//PushLayer(new ExampleLayer());
+			// ---- Resolve working directory ----
+			// Climb from the current directory upward until we find a folder
+			// that contains the "assets" directory. This correctly handles:
+			//   - Launch from VS (CWD = QL-Editor\bin\Debug-windows-x86_64\QL-Editor\)
+			//   - Launch from solution root (CWD = E:\QuentlamEngine\QuentlamEngine\)
+			//   - Launch from any subdirectory
+		try
+		{
+			std::filesystem::path currentPath = std::filesystem::current_path();
+			std::filesystem::path targetPath = currentPath;
+
+			while (!targetPath.empty())
+			{
+				// Prioritize Sandbox/assets as the project root (game content lives in Sandbox/)
+				// Fall back to QL-Editor/assets only if Sandbox/assets doesn't exist at that level
+				if (std::filesystem::exists(targetPath / "Sandbox" / "assets"))
+				{
+					targetPath = targetPath / "Sandbox";
+					break;
+				}
+				if (std::filesystem::exists(targetPath / "assets"))
+				{
+					break;
+				}
+
+				std::filesystem::path parent = targetPath.parent_path();
+				if (parent == targetPath || parent.empty())
+					break;
+				targetPath = parent;
+			}
+
+			if (targetPath != currentPath && !targetPath.empty())
+				{
+					std::filesystem::current_path(targetPath);
+					QL_CORE_INFO("Working directory resolved to: {0}", targetPath.string());
+				}
+				else
+				{
+					QL_CORE_INFO("Working directory unchanged: {0}", std::filesystem::current_path().string());
+				}
+		}
+			catch (const std::exception& e)
+			{
+				QL_CORE_ERROR("Failed to resolve working directory: {0}", e.what());
+			}
+
 			PushLayer(new EditorLayer());
 
 		}

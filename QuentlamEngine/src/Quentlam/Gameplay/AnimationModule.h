@@ -83,6 +83,9 @@ namespace Quentlam
 		void SetAtlasBinding(const SpriteAtlasBinding& binding) { m_AtlasBinding = binding; }
 		bool HasAtlasBinding() const { return !m_AtlasBinding.AtlasPath.empty(); }
 
+		std::string SerializeToJson() const;
+		bool DeserializeFromJson(const std::string& json);
+
 	private:
 		std::string m_Name;
 		std::vector<AnimationFrame> m_Frames;
@@ -124,6 +127,8 @@ namespace Quentlam
 		void SetFrameFinishedCallback(std::function<void()> callback);
 		void SetAnimationFinishedCallback(std::function<void()> callback);
 		void SetFrameEventCallback(std::function<void(const AnimationFrame&)> callback);
+
+		void RegisterClip(const std::string& name, Ref<AnimationClip> clip) { m_Clips[name] = clip; }
 
 		const std::string& GetCurrentState() const { return m_CurrentStateName; }
 		void SetCurrentState(const std::string& state) { m_CurrentStateName = state; }

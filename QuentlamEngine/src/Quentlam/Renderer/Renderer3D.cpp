@@ -4,6 +4,7 @@
 #include "VertexArray.h"
 #include "Shader.h"
 #include "RenderCommand.h"
+#include "Camera.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -50,6 +51,10 @@ namespace Quentlam
 		glm::vec2 CubeTexCoords[24];
 
 		Renderer3D::Statistics Stats;
+
+		glm::vec3 LightDirection = { -0.5f, -1.0f, -0.3f };
+		glm::vec3 LightColor = { 1.0f, 1.0f, 1.0f };
+		float LightIntensity = 1.0f;
 	};
 
 	static Renderer3DData s_Data3D;
@@ -181,12 +186,11 @@ namespace Quentlam
 
 		s_Data3D.TextureShader->Bind();
 		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-		
-		// Default Lighting for 3D primitives
-		s_Data3D.TextureShader->SetFloat("u_AmbientStrength", 0.3f);
-		s_Data3D.TextureShader->SetFloat("u_DiffuseStrength", 0.8f);
-		s_Data3D.TextureShader->SetFloat("u_SpecularStrength", 0.5f);
-		s_Data3D.TextureShader->SetFloat("u_Shininess", 32.0f);
+
+		// Directional light uniforms
+		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
+		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
+		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
 		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
 
 		s_Data3D.ModelShader->Bind();
@@ -205,11 +209,31 @@ namespace Quentlam
 		s_Data3D.TextureShader->Bind();
 		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
 
-		// Default Lighting for 3D primitives
-		s_Data3D.TextureShader->SetFloat("u_AmbientStrength", 0.3f);
-		s_Data3D.TextureShader->SetFloat("u_DiffuseStrength", 0.8f);
-		s_Data3D.TextureShader->SetFloat("u_SpecularStrength", 0.5f);
-		s_Data3D.TextureShader->SetFloat("u_Shininess", 32.0f);
+		// Directional light uniforms
+		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
+		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
+		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
+		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
+
+		s_Data3D.ModelShader->Bind();
+		s_Data3D.ModelShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
+
+		s_Data3D.CubeIndexCount = 0;
+		s_Data3D.CubeVertexBufferPtr = s_Data3D.CubeVertexBufferBase;
+
+		s_Data3D.TextureSlotIndex = 1;
+	}
+
+	void Renderer3D::BeginScene(const Camera& camera)
+	{
+		QL_PROFILE_FUNCTION();
+
+		s_Data3D.TextureShader->Bind();
+		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
+
+		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
+		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
+		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
 		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
 
 		s_Data3D.ModelShader->Bind();
@@ -490,6 +514,13 @@ namespace Quentlam
 		}
 	}
 
+	void Renderer3D::SetDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity)
+	{
+		s_Data3D.LightDirection = direction;
+		s_Data3D.LightColor = color;
+		s_Data3D.LightIntensity = intensity;
+	}
+
 	void Renderer3D::ResetStats()
 	{
 		memset(&s_Data3D.Stats, 0, sizeof(Statistics));
@@ -498,5 +529,54 @@ namespace Quentlam
 	Renderer3D::Statistics Renderer3D::GetStatistics()
 	{
 		return s_Data3D.Stats;
+	}
+
+	void Renderer3D::DrawCameraFrustum(const glm::vec3& position, const glm::vec3& rotation, float fov, float aspectRatio, float nearClip, float farClip, const glm::vec4& color)
+	{
+		// Use a fixed visual depth for the gizmo so it's always a reasonable size in the scene,
+		// independent of the camera's clip planes (which can be very close like 0.1).
+		// visualDepth = 50 * nearClip gives a frustum ~5 units deep for nearClip=0.1.
+		float visualDepth = nearClip * 50.0f;
+		float halfNearH = nearClip * tanf(glm::radians(fov * 0.5f));
+		float halfNearW = halfNearH * aspectRatio;
+		float halfFarH = visualDepth * tanf(glm::radians(fov * 0.5f));
+		float halfFarW = halfFarH * aspectRatio;
+
+		glm::mat4 rot = glm::rotate(glm::mat4(1.0f), glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f)) *
+			glm::rotate(glm::mat4(1.0f), glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f)) *
+			glm::rotate(glm::mat4(1.0f), glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+		glm::mat4 translation = glm::translate(glm::mat4(1.0f), position);
+
+		auto transformVec3 = [&](const glm::vec3& v) {
+			return glm::vec3(translation * rot * glm::vec4(v, 0.0f));
+		};
+
+		glm::vec3 ntl = transformVec3({ -halfNearW,  halfNearH, -nearClip });
+		glm::vec3 ntr = transformVec3({  halfNearW,  halfNearH, -nearClip });
+		glm::vec3 nbl = transformVec3({ -halfNearW, -halfNearH, -nearClip });
+		glm::vec3 nbr = transformVec3({  halfNearW, -halfNearH, -nearClip });
+
+		glm::vec3 ftl = transformVec3({ -halfFarW,  halfFarH, -visualDepth });
+		glm::vec3 ftr = transformVec3({  halfFarW,  halfFarH, -visualDepth });
+		glm::vec3 fbl = transformVec3({ -halfFarW, -halfFarH, -visualDepth });
+		glm::vec3 fbr = transformVec3({  halfFarW, -halfFarH, -visualDepth });
+
+		glColor4fv(&color.x);
+		glBegin(GL_LINES);
+		glVertex3fv(&ntl.x); glVertex3fv(&ntr.x);
+		glVertex3fv(&ntr.x); glVertex3fv(&nbr.x);
+		glVertex3fv(&nbr.x); glVertex3fv(&nbl.x);
+		glVertex3fv(&nbl.x); glVertex3fv(&ntl.x);
+
+		glVertex3fv(&ftl.x); glVertex3fv(&ftr.x);
+		glVertex3fv(&ftr.x); glVertex3fv(&fbr.x);
+		glVertex3fv(&fbr.x); glVertex3fv(&fbl.x);
+		glVertex3fv(&fbl.x); glVertex3fv(&ftl.x);
+
+		glVertex3fv(&ntl.x); glVertex3fv(&ftl.x);
+		glVertex3fv(&ntr.x); glVertex3fv(&ftr.x);
+		glVertex3fv(&nbl.x); glVertex3fv(&fbl.x);
+		glVertex3fv(&nbr.x); glVertex3fv(&fbr.x);
+		glEnd();
 	}
 }

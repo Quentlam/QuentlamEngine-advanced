@@ -12,6 +12,9 @@
 #include <array>
 #include <unordered_map>
 #include <unordered_set>
+#include <optional>
+#include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 
 #include "Quentlam/Core/Log.h"
