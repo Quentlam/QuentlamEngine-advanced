@@ -17,7 +17,6 @@ namespace Quentlam
 
 		static void BeginScene(OrthographicCamera& camera);
 		static void BeginScene(const PerspectiveCamera& camera);
-		static void BeginScene(const Camera& camera);
 		static void EndScene();
 		static void Flush();
 

@@ -26,6 +26,17 @@ namespace Quentlam
 		glm::vec3 GetRotation() const { return m_CameraRotation; }
 		void SetPosition(const glm::vec3& pos) { m_CameraPosition = pos; m_Camera.SetPosition(pos); }
 		void SetRotation(const glm::vec3& rot) { m_CameraRotation = rot; }
+		void SetLockZAxis(bool lock) { m_LockZAxis = lock; }
+		void SetPitchForTopDown(float pitchDegrees)
+		{
+			m_CameraRotation.x = pitchDegrees;
+			m_Camera.SetRotation(m_CameraRotation);
+		}
+
+		// Switch between 2D orthographic and 3D perspective modes
+		void Set2DMode(float zoom);
+		void Set3DMode(float fov);
+		bool Is2DMode() const { return m_Is2DMode; }
 	private:
 		bool OnMouseScrolled(MouseScrolledEvent& e);
 		bool OnWindowResized(WindowResizeEvent& e);
@@ -41,5 +52,7 @@ namespace Quentlam
 		
 		glm::vec2 m_InitialMousePosition = { 0.0f, 0.0f };
 		bool m_RightMouseWasPressed = false;
+		bool m_LockZAxis = false;
+		bool m_Is2DMode = false;
 	};
 }

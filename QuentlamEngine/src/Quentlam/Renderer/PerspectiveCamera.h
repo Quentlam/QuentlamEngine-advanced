@@ -13,6 +13,7 @@ namespace Quentlam
 		PerspectiveCamera(float fov, float aspectRatio, float nearClip = 0.1f, float farClip = 1000.0f);
 
 		void SetPerspective(float fov, float aspect, float nearClip, float farClip) override;
+		void SetOrthographic(float left, float right, float bottom, float top);
 		void SetViewportSize(uint32_t width, uint32_t height) override;
 
 		const glm::vec3& GetPosition() const override { return m_Position; }
@@ -23,6 +24,8 @@ namespace Quentlam
 
 		const glm::mat4& GetViewMatrix() const override { return m_ViewMatrix; }
 		const glm::mat4& GetViewProjectionMatrix() const override { return m_ViewProjectionMatrix; }
+
+		bool IsOrthographic() const { return m_IsOrthographic; }
 
 		float GetFOV() const { return m_FOV; }
 		float GetNearClip() const { return m_NearClip; }
@@ -42,5 +45,6 @@ namespace Quentlam
 		float m_AspectRatio = 1.78f;
 		float m_NearClip = 0.1f;
 		float m_FarClip = 1000.0f;
+		bool m_IsOrthographic = false;
 	};
 }

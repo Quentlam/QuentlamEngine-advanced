@@ -220,6 +220,9 @@ namespace Quentlam
 		uint32_t triangleDataSize = static_cast<uint32_t>((uint8_t*)s_Data.TriangleVertexBufferPtr - (uint8_t*)s_Data.TriangleVertexBufferBase);
 		s_Data.TriangleVertexBuffer->SetData(s_Data.TriangleVertexBufferBase, triangleDataSize);
 
+		s_Data.TextureShader->Bind();
+		s_Data.TextureShader->SetMat4("u_Transform", glm::mat4(1.0f));
+
 		Flush();
 	}
 	void Renderer2D::Flush()

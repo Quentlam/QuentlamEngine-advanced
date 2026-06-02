@@ -2,6 +2,7 @@
 
 #include "Quentlam/Core/Layer.h"
 #include "Platform/OpenGL/OpenGLShader.h"
+#include "Quentlam/Renderer/Camera.h"
 #include "Quentlam/Renderer/PerspectiveCamera.h"
 #include "Quentlam/Renderer/PerspectiveCameraController.h"
 #include "Quentlam/Renderer/Model.h"
@@ -18,6 +19,7 @@
 #include "AtlasBuilderPanel.h"
 #include "Quentlam/Gameplay/AnimatorEditorPanel.h"
 #include "Quentlam/Gameplay/NavMeshEditorPanel.h"
+#include "Quentlam/Renderer/SkyRenderer.h"
 
 
 namespace Quentlam
@@ -63,15 +65,25 @@ namespace Quentlam
 		void HandleViewportTileMapBrush(const glm::vec2& vpSize);
 		bool OnKeyPressed(KeyPressedEvent& e);
 
+		// Get the scene camera entity's CameraComponent for rendering
+		Camera* GetSceneCameraForRendering(bool is3D);
+
+		// Render all 3D scene content (cubes, primitives, colliders, models, sky)
+		void RenderSceneContent3D(bool is3D, const glm::vec3& camPos, const glm::mat4& view, const glm::mat4& proj);
+
+		// Render scene content to a framebuffer using a camera
+		void RenderSceneToFramebuffer(Ref<FrameBuffer> fb, OrthographicCamera& camera, const glm::vec2& size, bool is3D);
+		void RenderSceneToFramebuffer(Ref<FrameBuffer> fb, PerspectiveCamera& camera, const glm::vec2& size, bool is3D);
+
 		void OnScenePlay();
 		void OnSceneStop();
 		void OnScenePause();
 		void OnSceneStep();
 		void ResumeScenePlay();
 
-		OrthographicCameraController  m_CameraController;
-		PerspectiveCameraController   m_PerspCameraController;
-		bool m_Is3DCamera = false;
+		PerspectiveCameraController m_SceneCamera;  // Editor camera (2D/3D switchable)
+		PerspectiveCameraController m_GameCamera;   // Game camera (2D/3D switchable)
+		bool m_Is2DCamera = false;
 
 		//Temp
 		Ref<Texture2D>		m_Texture2D;
@@ -81,6 +93,9 @@ namespace Quentlam
 		Ref<FrameBuffer>	m_GameFramebuffer;
 		glm::vec2 m_ViewportSize{ 0.0f, 0.0f };
 		glm::vec2 m_GameViewportSize{ 0.0f, 0.0f };
+		// Cached sizes from ImGui window (available in OnUpdate)
+		glm::vec2 m_CachedSceneViewportSize{ 1280.0f, 720.0f };
+		glm::vec2 m_CachedGameViewportSize{ 1280.0f, 720.0f };
 		glm::vec2 m_SceneRenderSize{ 1280.0f, 720.0f };
 		glm::vec2 m_GameRenderSize{ 1280.0f, 720.0f };
 
@@ -92,6 +107,7 @@ namespace Quentlam
 		Entity m_SquareEntity;
 		Entity m_CubeEntity;
 		Entity m_ModelEntity;
+		Entity m_SceneCameraEntity;
 
 		Ref<Scene>	m_ActiveScene;
 
@@ -101,6 +117,7 @@ namespace Quentlam
 		Entity m_SelectedEntity;
 		Entity m_HoveredEntity;
 		glm::vec2 m_ViewportBounds[2];
+		glm::vec2 m_GameViewportBounds[2];
 
 		int m_GizmoType = -1;
 
@@ -184,6 +201,8 @@ namespace Quentlam
 
 		// Skybox
 		bool m_ShowSkybox = true;
+
+		SkyRenderer m_SkyRenderer;
 
 		// Viewport layout
 		ViewportLayout m_ViewportLayout = ViewportLayout::SceneOnly;

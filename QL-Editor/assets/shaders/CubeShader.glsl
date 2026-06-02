@@ -27,23 +27,24 @@ out float v_SpecularStrength;
 out float v_Shininess;
 
 uniform mat4 u_ViewProjection;
+uniform mat4 u_Transform;
 
 void main()
 {
-	v_FragPos = a_Position; 
-	v_Normal = a_Normal;
+	v_FragPos = vec3(u_Transform * vec4(a_Position, 1.0));
+	v_Normal = normalize(mat3(u_Transform) * a_Normal);
 	v_Color = a_Color;
 	v_TexCoord = a_TexCoord;
 	v_TexIndex = a_TexIndex;
 	v_TilingFactor = a_TilingFactor;
 	v_EntityID = a_EntityID;
-	
+
 	v_AmbientStrength = a_AmbientStrength;
 	v_DiffuseStrength = a_DiffuseStrength;
 	v_SpecularStrength = a_SpecularStrength;
 	v_Shininess = a_Shininess;
-	
-	gl_Position = u_ViewProjection * vec4(a_Position, 1.0);
+
+	gl_Position = u_ViewProjection * u_Transform * vec4(a_Position, 1.0);
 }
 
 #type fragment

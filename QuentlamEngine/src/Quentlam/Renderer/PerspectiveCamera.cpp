@@ -23,7 +23,15 @@ namespace Quentlam
 		float f = glm::max(m_FarClip, n + 1.0f);
 		m_FOV = fov;
 		m_AspectRatio = aspectRatio;
+		m_IsOrthographic = false;
 		m_Projection = glm::perspective(glm::radians(m_FOV), m_AspectRatio, n, f);
+		m_ViewProjectionMatrix = m_Projection * m_ViewMatrix;
+	}
+
+	void PerspectiveCamera::SetOrthographic(float left, float right, float bottom, float top)
+	{
+		m_IsOrthographic = true;
+		m_Projection = glm::ortho(left, right, bottom, top, -1.0f, 1.0f);
 		m_ViewProjectionMatrix = m_Projection * m_ViewMatrix;
 	}
 
@@ -32,11 +40,19 @@ namespace Quentlam
 		if (width == 0 || height == 0) return;
 		m_AspectRatio = static_cast<float>(width) / static_cast<float>(height);
 		if (m_AspectRatio <= 0.0f || std::isnan(m_AspectRatio)) return;
-		if (m_FOV <= 0.0f || std::isnan(m_FOV)) m_FOV = 60.0f;
-		float n = glm::max(m_NearClip, 0.01f);
-		float f = glm::max(m_FarClip, n + 1.0f);
-		m_Projection = glm::perspective(glm::radians(m_FOV), m_AspectRatio, n, f);
-		m_ViewProjectionMatrix = m_Projection * m_ViewMatrix;
+
+		if (m_IsOrthographic)
+		{
+			SetOrthographic(-(float)width / 2.0f, (float)width / 2.0f, -(float)height / 2.0f, (float)height / 2.0f);
+		}
+		else
+		{
+			if (m_FOV <= 0.0f || std::isnan(m_FOV)) m_FOV = 60.0f;
+			float n = glm::max(m_NearClip, 0.01f);
+			float f = glm::max(m_FarClip, n + 1.0f);
+			m_Projection = glm::perspective(glm::radians(m_FOV), m_AspectRatio, n, f);
+			m_ViewProjectionMatrix = m_Projection * m_ViewMatrix;
+		}
 	}
 
 	void PerspectiveCamera::RecalculateViewMatrix()

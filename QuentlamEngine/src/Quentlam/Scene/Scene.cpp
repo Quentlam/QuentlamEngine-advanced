@@ -173,8 +173,8 @@ namespace Quentlam
 		if (aspect <= 0.0f) aspect = 1280.0f / 720.0f;
 		sceneCam._camera.SetOrthographic(-aspect * 0.5f, aspect * 0.5f, -0.5f, 0.5f);
 		sceneCam.FixedAspectRatio = false;
-		auto& sceneCube = sceneCameraEnt.AddComponent<CubeRendererComponent>();
-		sceneCube.Color = { 0.2f, 0.6f, 1.0f, 0.5f }; // semi-transparent blue
+		auto& sceneCamTC = sceneCameraEnt.GetComponent<TransformComponent>();
+		sceneCamTC.Transform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
 
 		auto gameCameraEnt = CreateEntity("游戏摄像机");
 		auto& gameCam = gameCameraEnt.AddComponent<CameraComponent>();

@@ -17,6 +17,22 @@ namespace Quentlam
 	{
 		QL_PROFILE_FUNCTION();
 
+		// In 2D mode, use simple X/Y movement without rotation
+		if (m_Is2DMode)
+		{
+			if (Input::IsKeyPressed(Key::A))
+				m_CameraPosition.x -= m_CameraTranslationSpeed * ts;
+			if (Input::IsKeyPressed(Key::D))
+				m_CameraPosition.x += m_CameraTranslationSpeed * ts;
+			if (Input::IsKeyPressed(Key::W))
+				m_CameraPosition.y += m_CameraTranslationSpeed * ts;
+			if (Input::IsKeyPressed(Key::S))
+				m_CameraPosition.y -= m_CameraTranslationSpeed * ts;
+			m_Camera.SetPosition(m_CameraPosition);
+			return;
+		}
+
+		// 3D mode - full rotation and movement
 		// Rotate
 		if (Input::IsKeyPressed(Key::Left))
 			m_CameraRotation.y += m_CameraRotationSpeed * ts; // Yaw Left
@@ -42,7 +58,7 @@ namespace Quentlam
 
 				m_CameraRotation.y -= delta.x * m_CameraRotationSpeed * ts; // Yaw
 				m_CameraRotation.x -= delta.y * m_CameraRotationSpeed * ts; // Pitch
-				
+
 				// Clamp pitch to avoid flipping
 				m_CameraRotation.x = std::clamp(m_CameraRotation.x, -89.0f, 89.0f);
 			}
@@ -66,11 +82,11 @@ namespace Quentlam
 			-cos(yaw) * cos(pitch)
 		};
 		forward = glm::normalize(forward);
-		
+
 		glm::vec3 upRef = glm::vec3(0.0f, 1.0f, 0.0f);
 		if (glm::abs(forward.y) > 0.999f)
 			upRef = glm::vec3(0.0f, 0.0f, -1.0f);
-			
+
 		glm::vec3 right = glm::normalize(glm::cross(forward, upRef));
 		glm::vec3 up = glm::normalize(glm::cross(right, forward));
 
@@ -91,6 +107,10 @@ namespace Quentlam
 		else if (Input::IsKeyPressed(Key::Q))
 			m_CameraPosition -= glm::vec3(0.0f, 1.0f, 0.0f) * (m_CameraTranslationSpeed * ts);
 
+		// Lock z-axis for 2D-style top-down navigation to prevent ground plane from shifting
+		if (m_LockZAxis)
+			m_CameraPosition.z = 5.0f;
+
 		m_Camera.SetPosition(m_CameraPosition);
 		m_Camera.SetRotation(m_CameraRotation);
 	}
@@ -101,6 +121,22 @@ namespace Quentlam
 		EventDispatcher dispatcher(e);
 		dispatcher.Dispatch<MouseScrolledEvent>(QL_BIND_EVENT_FN(PerspectiveCameraController::OnMouseScrolled));
 		dispatcher.Dispatch<WindowResizeEvent>(QL_BIND_EVENT_FN(PerspectiveCameraController::OnWindowResized));
+	}
+
+	void PerspectiveCameraController::Set2DMode(float zoom)
+	{
+		if (m_AspectRatio <= 0.0f) return;
+		m_Is2DMode = true;
+		m_ZoomLevel = zoom;
+		m_Camera.SetOrthographic(-m_AspectRatio * zoom, m_AspectRatio * zoom, -zoom, zoom);
+	}
+
+	void PerspectiveCameraController::Set3DMode(float fov)
+	{
+		if (m_AspectRatio <= 0.0f) return;
+		m_Is2DMode = false;
+		m_ZoomLevel = fov;
+		m_Camera.SetPerspective(fov, m_AspectRatio, 0.1f, 1000.0f);
 	}
 
 	bool PerspectiveCameraController::OnMouseScrolled(MouseScrolledEvent& e)
@@ -137,6 +173,9 @@ namespace Quentlam
 
 		float aspect = (width <= 0.0f) ? 1.78f : (width / height);
 		m_AspectRatio = aspect;
-		m_Camera.SetPerspective(m_ZoomLevel, m_AspectRatio, 0.1f, 1000.0f);
+		if (m_Is2DMode)
+			Set2DMode(m_ZoomLevel);
+		else
+			m_Camera.SetPerspective(m_ZoomLevel, m_AspectRatio, 0.1f, 1000.0f);
 	}
 }

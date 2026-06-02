@@ -183,65 +183,32 @@ namespace Quentlam
 	void Renderer3D::BeginScene(OrthographicCamera& camera)
 	{
 		QL_PROFILE_FUNCTION();
-
 		s_Data3D.TextureShader->Bind();
 		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
-		// Directional light uniforms
 		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
 		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
 		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
 		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
-
 		s_Data3D.ModelShader->Bind();
 		s_Data3D.ModelShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
 		s_Data3D.CubeIndexCount = 0;
 		s_Data3D.CubeVertexBufferPtr = s_Data3D.CubeVertexBufferBase;
-
 		s_Data3D.TextureSlotIndex = 1;
 	}
 
 	void Renderer3D::BeginScene(const PerspectiveCamera& camera)
 	{
 		QL_PROFILE_FUNCTION();
-
 		s_Data3D.TextureShader->Bind();
 		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
-		// Directional light uniforms
 		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
 		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
 		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
 		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
-
 		s_Data3D.ModelShader->Bind();
 		s_Data3D.ModelShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
 		s_Data3D.CubeIndexCount = 0;
 		s_Data3D.CubeVertexBufferPtr = s_Data3D.CubeVertexBufferBase;
-
-		s_Data3D.TextureSlotIndex = 1;
-	}
-
-	void Renderer3D::BeginScene(const Camera& camera)
-	{
-		QL_PROFILE_FUNCTION();
-
-		s_Data3D.TextureShader->Bind();
-		s_Data3D.TextureShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
-		s_Data3D.TextureShader->SetFloat3("u_LightDirection", s_Data3D.LightDirection);
-		s_Data3D.TextureShader->SetFloat3("u_LightColor", s_Data3D.LightColor);
-		s_Data3D.TextureShader->SetFloat("u_LightIntensity", s_Data3D.LightIntensity);
-		s_Data3D.TextureShader->SetFloat3("u_ViewPos", camera.GetPosition());
-
-		s_Data3D.ModelShader->Bind();
-		s_Data3D.ModelShader->SetMat4("u_ViewProjection", camera.GetViewProjectionMatrix());
-
-		s_Data3D.CubeIndexCount = 0;
-		s_Data3D.CubeVertexBufferPtr = s_Data3D.CubeVertexBufferBase;
-
 		s_Data3D.TextureSlotIndex = 1;
 	}
 
@@ -263,6 +230,9 @@ namespace Quentlam
 
 		uint32_t dataSize = (uint32_t)((uint8_t*)s_Data3D.CubeVertexBufferPtr - (uint8_t*)s_Data3D.CubeVertexBufferBase);
 		s_Data3D.CubeVertexBuffer->SetData(s_Data3D.CubeVertexBufferBase, dataSize);
+
+		s_Data3D.TextureShader->Bind();
+		s_Data3D.TextureShader->SetMat4("u_Transform", glm::mat4(1.0f));
 
 		Flush();
 	}
