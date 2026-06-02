@@ -61,7 +61,6 @@ namespace Quentlam
 
 	private:
 		void HandleViewportDragDrop(const glm::vec2& vpSize);
-		void HandleViewportMousePick(bool sceneViewport);
 		void HandleViewportTileMapBrush(const glm::vec2& vpSize);
 		bool OnKeyPressed(KeyPressedEvent& e);
 

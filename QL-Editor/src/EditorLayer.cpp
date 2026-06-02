@@ -1301,7 +1301,7 @@ namespace Quentlam
 			for (int i = 0; i < 2; i++)
 			{
 				bool selected = (int)m_ViewportLayout == i;
-				if (ImGui::MenuItem(layoutNames[i], nullptr, selected))
+				if (ImGui::MenuItem(layoutNames[i], "", selected))
 					m_ViewportLayout = (ViewportLayout)i;
 			}
 
@@ -2213,8 +2213,26 @@ namespace Quentlam
 				drawList->AddText(ImVec2(drawOffset.x + 8, drawOffset.y + 6),
 					IM_COL32(102, 179, 255, 255), "Scene View");
 
+				// Mouse pick: read entity ID from framebuffer's entity texture
+				if (ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver())
+				{
+					ImVec2 mousePos = ImGui::GetMousePos();
+					int mx = (int)(mousePos.x - m_ViewportBounds[0].x);
+					int my = (int)(mousePos.y - m_ViewportBounds[0].y);
+					int entityID = m_Framebuffer->ReadPixel(1, mx, my);
+					if (entityID > 0)
+					{
+						m_HoveredEntity = Entity((entt::entity)entityID, m_ActiveScene.get());
+						m_SelectedEntity = m_HoveredEntity;
+					}
+					else
+					{
+						m_HoveredEntity = {};
+						m_SelectedEntity = {};
+					}
+				}
+
 				HandleViewportDragDrop(m_ViewportSize);
-				HandleViewportMousePick(true);
 			}
 			ImGui::End();
 		}
@@ -2311,9 +2329,6 @@ namespace Quentlam
 		ImGui::PopStyleVar();
 
 		// ---- Post-Viewport Render ----
-
-		// Mouse picking check - scene view
-		HandleViewportMousePick(true);
 
 		// TileMap brush painting - scene view only
 		HandleViewportTileMapBrush(m_ViewportSize);
@@ -2765,21 +2780,6 @@ namespace Quentlam
 				}
 			}
 			ImGui::EndDragDropTarget();
-		}
-	}
-
-	void EditorLayer::HandleViewportMousePick(bool sceneViewport)
-	{
-		if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) && !ImGuizmo::IsOver())
-		{
-			if (m_HoveredEntity)
-			{
-				m_SelectedEntity = m_HoveredEntity;
-			}
-			else
-			{
-				m_SelectedEntity = {};
-			}
 		}
 	}
 
