@@ -123,9 +123,10 @@ namespace Quentlam
 
 	int OpenGLFrameBuffer::ReadPixel(uint32_t attachmentIndex, int x, int y)
 	{
-		GLint prevReadFB, prevDrawFB;
+		GLint prevReadFB, prevDrawFB, prevDrawBuffer;
 		glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFB);
 		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFB);
+		glGetIntegerv(GL_DRAW_BUFFER, &prevDrawBuffer);
 		glBindFramebuffer(GL_FRAMEBUFFER, m_RendererID);
 		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
 		if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -133,8 +134,10 @@ namespace Quentlam
 			QL_CORE_ERROR("ReadPixel: framebuffer incomplete! status={0}", status);
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFB);
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFB);
+			glDrawBuffer(prevDrawBuffer);
 			return -1;
 		}
+		glDrawBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
 		glReadBuffer(GL_COLOR_ATTACHMENT0 + attachmentIndex);
 		GLenum err = glGetError();
 		if (err != GL_NO_ERROR)
@@ -142,6 +145,7 @@ namespace Quentlam
 			QL_CORE_ERROR("ReadPixel: glReadBuffer error={0}", err);
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFB);
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFB);
+			glDrawBuffer(prevDrawBuffer);
 			return -1;
 		}
 		glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -154,6 +158,7 @@ namespace Quentlam
 			QL_CORE_ERROR("ReadPixel: glReadPixels error={0}", err);
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFB);
 			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFB);
+			glDrawBuffer(prevDrawBuffer);
 			return -1;
 		}
 		if (pixelData != -1)
@@ -161,6 +166,7 @@ namespace Quentlam
 				attachmentIndex, x, y, m_Specification.Height, m_Specification.Height - 1 - y, pixelData);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFB);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFB);
+		glDrawBuffer(prevDrawBuffer);
 		return pixelData;
 	}
 

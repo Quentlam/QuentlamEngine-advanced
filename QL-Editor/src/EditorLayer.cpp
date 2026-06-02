@@ -1439,7 +1439,7 @@ namespace Quentlam
 			drawEntityNode(entityID);
 		}
 
-		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered())
+		if (ImGui::IsMouseClicked(0) && ImGui::IsWindowHovered())
 		{
 			m_SelectedEntities.clear();
 			m_SelectedEntity = {};
@@ -2175,6 +2175,7 @@ namespace Quentlam
 					bool isModel = (m_SelectedEntity == m_ModelEntity);
 					if (hasSprite || hasTri || isCube || isModel)
 					{
+						m_Framebuffer->Bind();
 						RenderCommand::SetDepthTest(false);
 						GLenum drawBuffers[] = { GL_COLOR_ATTACHMENT0 };
 						glDrawBuffers(1, drawBuffers);
@@ -2194,8 +2195,7 @@ namespace Quentlam
 						glBindVertexArray(m_EmptyVAO);
 						glDrawArrays(GL_TRIANGLES, 0, 3);
 						glBindVertexArray(0);
-						GLenum allBuffers2[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-						glDrawBuffers(2, allBuffers2);
+						m_Framebuffer->UnBind();
 						glDisable(GL_BLEND);
 						RenderCommand::SetDepthTest(true);
 					}
