@@ -89,9 +89,14 @@
    ```
 
 2. **一键生成工程文件**:
-   运行根目录下的自动化构建脚本，它会调用 `premake5` 生成完整的 VS 解决方案：
+   运行自动化构建脚本，它会准备第三方依赖（下载 `premake5`、用 CMake 编译 `assimp`）并生成完整的工程文件：
    ```cmd
    .\script\GenerateProject.bat
+   ```
+
+   Linux 下使用同一套逻辑的 shell 入口（Windows 上签出的文件可能不带执行位，用 `bash` 调用最稳妥）：
+   ```bash
+   bash script/bootstrap.sh
    ```
 
 3. **编译并起飞**:

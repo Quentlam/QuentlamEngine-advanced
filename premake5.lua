@@ -351,6 +351,7 @@ workspace "QuentlamEngine"
 			"QuentlamEngine/vendor",
 			"%{IncludeDir.glm}",
 			"%{IncludeDir.ImGui}",
+			"%{IncludeDir.GLFW}",
 			"%{IncludeDir.Glad}",
 			"%{IncludeDir.entt}",
 			"%{IncludeDir.ImGuizmo}",

@@ -35,3 +35,6 @@ QuentlamEngine/vendor/JoltPhysics/Assets/
 QuentlamEngine/vendor/JoltPhysics/Docs/
 QuentlamEngine/vendor/JoltPhysics/Web/
 QuentlamEngine/vendor/glm/doc/
+
+#IDEProject
+.workbuddy/
